@@ -3,11 +3,10 @@
   hosts: localhost
   gather_facts: false
   vars:
-    # Configurações AWX (podem ser sobrescritas via extra_vars)
+    # Configurações AWX (definidas via extra_vars)
     awx_url: "{{ awx_url | default('http://10.0.100.159:8013') }}"
-    # Credentials injetadas via AWX Custom Credential Type
-    awx_user: "{{ lookup('env', 'AWX_USERNAME') | default(awx_user | default('junior')) }}"
-    awx_password: "{{ lookup('env', 'AWX_PASSWORD') | default(awx_password | default('')) }}"
+    awx_user: "{{ awx_user | default('junior') }}"
+    awx_password: "{{ awx_password | default('') }}"
     
     # Filtros
     inventory_filter: "{{ inventory_filter | default('VMware Inventory') }}"
