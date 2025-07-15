@@ -1,0 +1,12 @@
+# Configurações padrão AWX
+awx_url: "http://10.0.100.159:8013"
+awx_user: "junior"
+# awx_password deve ser definido via extra_vars por segurança
+
+# Filtros padrão
+inventory_filter: "VMware Inventory"
+host_filter: ""
+
+# Configurações de execução
+list_only: true  # true=apenas listar, false=processar para NetBox
+dry_run: true    # true=simular, false=executar

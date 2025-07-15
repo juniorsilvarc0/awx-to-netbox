@@ -1,0 +1,256 @@
+---
+- name: "🚀 AWX Simple Collector - Coleta dados via API AWX"
+  hosts: localhost
+  gather_facts: false
+  vars:
+    # Configurações AWX (podem ser sobrescritas via extra_vars)
+    awx_url: "{{ awx_url | default('http://10.0.100.159:8013') }}"
+    awx_user: "{{ awx_user | default('junior') }}"
+    awx_password: "{{ awx_password | default('JR83silV@83') }}"
+    
+    # Filtros
+    inventory_filter: "{{ inventory_filter | default('VMware Inventory') }}"
+    host_filter: "{{ host_filter | default('') }}"
+    
+    # Configurações de execução
+    list_only: "{{ list_only | default(true) }}"
+    show_details: "{{ show_details | default(true) }}"
+
+  tasks:
+    - name: "📋 Exibir configurações"
+      debug:
+        msg: |
+          🚀 AWX Simple Collector - Configurações:
+          🔗 AWX URL: {{ awx_url }}
+          👤 Usuário: {{ awx_user }}
+          📦 Filtro de inventários: {{ inventory_filter }}
+          🖥️ Filtro de hosts: {{ host_filter if host_filter else 'Nenhum' }}
+          📊 Modo: {{ 'Apenas Listar' if list_only else 'Processar para NetBox' }}
+          📋 Mostrar detalhes: {{ 'Sim' if show_details else 'Não' }}
+
+    - name: "🔍 Testar conectividade com AWX"
+      uri:
+        url: "{{ awx_url }}/api/v2/"
+        method: GET
+        user: "{{ awx_user }}"
+        password: "{{ awx_password }}"
+        force_basic_auth: true
+        validate_certs: false
+        return_content: true
+      register: awx_connectivity
+      failed_when: false
+
+    - name: "✅ Conectividade AWX"
+      debug:
+        msg: |
+          {% if awx_connectivity.status == 200 %}
+          ✅ Conectado com sucesso!
+          👤 Usuário atual: {{ awx_connectivity.json.current_user.username | default('Desconhecido') }}
+          📊 Versão AWX: {{ awx_connectivity.json.version | default('Desconhecida') }}
+          {% else %}
+          ❌ Falha na conectividade!
+          🔍 Status: {{ awx_connectivity.status | default('N/A') }}
+          📝 Erro: {{ awx_connectivity.msg | default('Conexão falhou') }}
+          {% endif %}
+
+    - name: "❌ Falhar se não conseguir conectar"
+      fail:
+        msg: "Não foi possível conectar ao AWX. Verifique URL, usuário e senha."
+      when: awx_connectivity.status != 200
+
+    - name: "📦 Buscar inventários disponíveis"
+      uri:
+        url: "{{ awx_url }}/api/v2/inventories/"
+        method: GET
+        user: "{{ awx_user }}"
+        password: "{{ awx_password }}"
+        force_basic_auth: true
+        validate_certs: false
+        return_content: true
+      register: awx_inventories
+
+    - name: "📊 Exibir inventários encontrados"
+      debug:
+        msg: |
+          📦 Inventários encontrados ({{ awx_inventories.json.count }}):
+          {% for inv in awx_inventories.json.results %}
+          - {{ inv.name }} (ID: {{ inv.id }}) - {{ inv.description | default('Sem descrição') }}
+          {% endfor %}
+
+    - name: "🎯 Filtrar inventários alvo"
+      set_fact:
+        target_inventories: >-
+          {{
+            awx_inventories.json.results | 
+            selectattr('name', 'in', inventory_filter.split(',') | map('trim')) | 
+            list
+          }}
+      when: inventory_filter != ""
+
+    - name: "🎯 Usar todos os inventários se não houver filtro"
+      set_fact:
+        target_inventories: "{{ awx_inventories.json.results }}"
+      when: inventory_filter == ""
+
+    - name: "📋 Exibir inventários selecionados"
+      debug:
+        msg: |
+          🎯 Inventários selecionados para processamento:
+          {% for inv in target_inventories %}
+          - {{ inv.name }} (ID: {{ inv.id }})
+          {% endfor %}
+
+    - name: "🖥️ Buscar hosts dos inventários selecionados"
+      uri:
+        url: "{{ awx_url }}/api/v2/inventories/{{ item.id }}/hosts/"
+        method: GET
+        user: "{{ awx_user }}"
+        password: "{{ awx_password }}"
+        force_basic_auth: true
+        validate_certs: false
+        return_content: true
+      register: inventory_hosts
+      loop: "{{ target_inventories }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: "🖥️ Consolidar lista de hosts"
+      set_fact:
+        all_hosts: "{{ all_hosts | default([]) + item.json.results }}"
+      loop: "{{ inventory_hosts.results }}"
+      loop_control:
+        label: "Inventário com {{ item.json.results | length }} hosts"
+
+    - name: "🔍 Aplicar filtro de hosts"
+      set_fact:
+        filtered_hosts: >-
+          {{
+            all_hosts | 
+            selectattr('name', 'search', host_filter) | 
+            list
+          }}
+      when: host_filter != ""
+
+    - name: "🔍 Usar todos os hosts se não houver filtro"
+      set_fact:
+        filtered_hosts: "{{ all_hosts }}"
+      when: host_filter == ""
+
+    - name: "📊 Exibir resumo dos hosts"
+      debug:
+        msg: |
+          🖥️ Resumo dos hosts:
+          - Total encontrado: {{ all_hosts | length }}
+          - Após filtros: {{ filtered_hosts | length }}
+          
+          📋 Hosts selecionados:
+          {% for host in filtered_hosts %}
+          - {{ host.name }} (ID: {{ host.id }}) {{ '🟢' if host.enabled else '🔴' }}
+          {% endfor %}
+
+    - name: "🔍 Buscar detalhes completos dos hosts"
+      uri:
+        url: "{{ awx_url }}/api/v2/hosts/{{ item.id }}/"
+        method: GET
+        user: "{{ awx_user }}"
+        password: "{{ awx_password }}"
+        force_basic_auth: true
+        validate_certs: false
+        return_content: true
+      register: host_details
+      loop: "{{ filtered_hosts }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: "👥 Buscar grupos dos hosts"
+      uri:
+        url: "{{ awx_url }}/api/v2/hosts/{{ item.id }}/groups/"
+        method: GET
+        user: "{{ awx_user }}"
+        password: "{{ awx_password }}"
+        force_basic_auth: true
+        validate_certs: false
+        return_content: true
+      register: host_groups
+      loop: "{{ filtered_hosts }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: "📊 Processar e exibir dados detalhados dos hosts"
+      debug:
+        msg: |
+          ============================================================
+          🖥️ Host: {{ host_detail.name }} (ID: {{ host_detail.id }})
+          📝 Descrição: {{ host_detail.description }}
+          🔛 Habilitado: {{ 'Sim' if host_detail.enabled else 'Não' }}
+          📡 IP Ansible: {{ (host_detail.variables | from_json).ansible_host | default('N/A') }}
+          
+          🖼️ Informações da VM:
+             Nome da VM: {{ (host_detail.variables | from_json).vm_name | default('N/A') }}
+             Sistema Operacional: {{ (host_detail.variables | from_json).vm_guest_os | default('N/A') }}
+             Estado: {{ (host_detail.variables | from_json).vm_power_state | default('N/A') }}
+             CPU: {{ (host_detail.variables | from_json).vm_cpu_count | default('N/A') }}
+             Memória: {{ (host_detail.variables | from_json).vm_memory_gb | default('N/A') }} GB
+             Datacenter: {{ (host_detail.variables | from_json).vm_datacenter | default('N/A') }}
+             Cluster: {{ (host_detail.variables | from_json).vm_cluster | default('N/A') }}
+             UUID: {{ (host_detail.variables | from_json).vm_uuid | default('N/A') }}
+             {% set ip_addresses = (host_detail.variables | from_json).vm_ip_addresses | default([]) %}
+             {% if ip_addresses %}
+             IPs: {{ ip_addresses | join(', ') }}
+             {% endif %}
+          
+          👥 Grupos: {{ host_group.results | map(attribute='name') | join(', ') }}
+          
+          🔧 Comando para detalhes via API:
+          curl -u '{{ awx_user }}:****' '{{ awx_url }}/api/v2/hosts/{{ host_detail.id }}/' | jq '.'
+      vars:
+        host_detail: "{{ host_details.results[ansible_loop.index0].json }}"
+        host_group: "{{ host_groups.results[ansible_loop.index0].json }}"
+      loop: "{{ filtered_hosts }}"
+      loop_control:
+        extended: true
+        label: "{{ item.name }}"
+      when: show_details | bool
+
+    - name: "📊 Resumo final"
+      debug:
+        msg: |
+          📊 Resumo Final:
+          ==========================================
+          📦 Inventários processados: {{ target_inventories | length }}
+          🖥️ Total de hosts encontrados: {{ all_hosts | length }}
+          🎯 Hosts após filtros: {{ filtered_hosts | length }}
+          📋 Modo de execução: {{ 'Apenas Listagem' if list_only else 'Processamento Completo' }}
+          
+          ✅ Coleta concluída com sucesso!
+          
+          🔧 Comandos úteis:
+          # Listar todos os inventários
+          curl -u '{{ awx_user }}:****' '{{ awx_url }}/api/v2/inventories/' | jq '.results[] | {id, name}'
+          
+          # Hosts de um inventário específico
+          curl -u '{{ awx_user }}:****' '{{ awx_url }}/api/v2/inventories/INVENTORY_ID/hosts/' | jq '.results[] | {id, name}'
+
+    - name: "💾 Salvar dados coletados (simulado)"
+      debug:
+        msg: |
+          💾 Dados que seriam salvos em arquivo JSON:
+          - {{ filtered_hosts | length }} hosts processados
+          - Dados incluem: nome, IP, specs da VM, grupos, etc.
+          - Em execução real, seria salvo em awx_hosts_data.json
+      when: list_only | bool
+
+    - name: "🎯 Próximos passos"
+      debug:
+        msg: |
+          🎯 Próximos Passos:
+          
+          1. ✅ Coleta AWX funcionando
+          2. 🔄 Configurar NetBox (se necessário)
+          3. 🧪 Testar sincronização em dry-run
+          4. 🚀 Executar sincronização real
+          
+          💡 Para processar no NetBox:
+          - Configure netbox_url e netbox_token
+          - Defina list_only=false nas extra_vars
+          - Execute novamente o job
