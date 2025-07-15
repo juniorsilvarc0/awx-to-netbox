@@ -92,6 +92,16 @@
       set_fact:
         filtered_hosts: "{{ all_hosts }}"
       when: host_filter is not defined or host_filter == ""
+      
+    - name: "Filter out system hosts"
+      set_fact:
+        filtered_hosts: >-
+          {{
+            filtered_hosts | 
+            rejectattr('name', 'match', '^(localhost|127\.0\.0\.1|::1)$') |
+            rejectattr('name', 'match', '^(AWX|awx|tower|TOWER).*') |
+            list
+          }}
 
     - name: "Show VMs found"
       debug:
@@ -102,6 +112,7 @@
           - After filtering: {{ filtered_hosts | length }}
           - Inventory names: {{ target_inventories | map(attribute='name') | list }}
           - Filter used: {{ inventory_filter | default('VMware Inventory') }}
+          - System hosts filtered: {{ (all_hosts | length) - (filtered_hosts | length) }}
 
     - name: "Get host details"
       uri:
@@ -184,12 +195,18 @@
       set_fact:
         existing_vm_names: "{{ existing_vms_check.json.results | map(attribute='name') | list }}"
         existing_vm_names_clean: "{{ existing_vms_check.json.results | map(attribute='name') | map('regex_replace', '[^a-zA-Z0-9._-]', '_') | list }}"
+        existing_vm_cluster_names: "{{ existing_vms_check.json.results | selectattr('cluster', 'defined') | selectattr('cluster.id', 'equalto', 1) | map(attribute='name') | list }}"
+      when: 
+        - sync_to_netbox | default(false)
+        - existing_vms_check is defined
+        - existing_vms_check.json.results is defined
       
     - name: "Debug existing VMs"
       debug:
         msg: |
           Found {{ existing_vm_names | length }} existing VMs in NetBox:
           {{ existing_vm_names[:10] | join(', ') }}{{ '...' if existing_vm_names | length > 10 else '' }}
+          Found {{ existing_vm_cluster_names | length }} existing VMs in cluster 1
       when: 
         - sync_to_netbox | default(false)
         - existing_vms_check is defined
@@ -211,7 +228,7 @@
           - Will create: {{ vms_to_create | length }}
           - Will skip: {{ vms_to_skip | length }}
       vars:
-        vms_to_create: "{{ (netbox_vms | default([])) | rejectattr('name', 'in', existing_vm_names | default([])) | rejectattr('name', 'in', existing_vm_names_clean | default([])) | list }}"
+        vms_to_create: "{{ (netbox_vms | default([])) | rejectattr('name', 'in', existing_vm_names | default([])) | rejectattr('name', 'in', existing_vm_names_clean | default([])) | rejectattr('name', 'in', existing_vm_cluster_names | default([])) | rejectattr('original_name', 'in', existing_vm_names | default([])) | list }}"
         vms_to_skip: "{{ (netbox_vms | default([])) | selectattr('name', 'in', existing_vm_names | default([])) | list }}"
       when: sync_to_netbox | default(false)
 
@@ -308,6 +325,8 @@
         - not (dry_run | default(true))
         - item.name not in (existing_vm_names | default([]))
         - item.name not in (existing_vm_names_clean | default([]))
+        - item.name not in (existing_vm_cluster_names | default([]))
+        - item.original_name not in (existing_vm_names | default([]))
       failed_when: false
 
     # TODO: Implementar criação de interfaces e IPs
