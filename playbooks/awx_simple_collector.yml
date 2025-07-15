@@ -22,7 +22,7 @@
 
     - name: "Get inventories"
       uri:
-        url: "{{ awx_url | default('http://10.0.100.159:8013') }}/api/v2/inventories/"
+        url: "{{ awx_url | default('http://10.0.100.159:8013') }}/api/v2/inventories/?page_size=10000"
         method: GET
         user: "{{ lookup('env', 'AWX_USERNAME') }}"
         password: "{{ lookup('env', 'AWX_PASSWORD') }}"
@@ -42,7 +42,7 @@
 
     - name: "Get hosts from inventories"
       uri:
-        url: "{{ awx_url | default('http://10.0.100.159:8013') }}/api/v2/inventories/{{ item.id }}/hosts/"
+        url: "{{ awx_url | default('http://10.0.100.159:8013') }}/api/v2/inventories/{{ item.id }}/hosts/?page_size=10000"
         method: GET
         user: "{{ lookup('env', 'AWX_USERNAME') }}"
         password: "{{ lookup('env', 'AWX_PASSWORD') }}"
@@ -58,7 +58,6 @@
       set_fact:
         all_hosts: "{{ all_hosts | default([]) + item.json.results }}"
       loop: "{{ inventory_hosts.results }}"
-      no_log: true
 
     - name: "Apply host filter"
       set_fact:
@@ -75,9 +74,9 @@
         filtered_hosts: "{{ all_hosts }}"
       when: host_filter is not defined or host_filter == ""
 
-    - name: "Limit to 10 VMs"
-      set_fact:
-        filtered_hosts: "{{ filtered_hosts[:10] }}"
+    - name: "Show VMs found"
+      debug:
+        msg: "Found {{ filtered_hosts | length }} VMs total from {{ all_hosts | length }} hosts"
 
     - name: "Get host details"
       uri:
@@ -92,7 +91,6 @@
       loop: "{{ filtered_hosts }}"
       loop_control:
         label: "{{ item.name }}"
-      no_log: true
 
     - name: "Process VM data"
       set_fact:
@@ -121,7 +119,6 @@
         extended: true
         label: "{{ item.name }}"
       failed_when: false
-      no_log: true
 
     - name: "Show summary"
       debug:
@@ -193,7 +190,6 @@
         - not (dry_run | default(true))
         - item.name not in existing_vm_names
       failed_when: false
-      no_log: true
 
     - name: "Show sync results"
       debug:
