@@ -111,7 +111,7 @@
           status: "{{ 'active' if (host_vars.vm_power_state | default('')) == 'poweredOn' else 'offline' }}"
           vcpus: "{{ (host_vars.vm_cpu_count | default(1) | int) }}"
           memory_mb: "{{ ((host_vars.vm_memory_gb | default(1) | float) * 1024) | int }}"
-          disk_gb: "{{ (host_vars.vm_disk_gb | default(host_vars.vm_memory_gb | default(20)) | float) }}"
+          disk_gb: "{{ (host_vars.vm_disk_total_gb | default(20) | float) }}"
           primary_ip4: "{{ host_vars.ansible_host | default('') }}"
           awx_id: "{{ host_detail.id }}"
       loop: "{{ filtered_hosts }}"
@@ -123,7 +123,7 @@
 
     - name: "Show summary"
       debug:
-        msg: "Processed {{ netbox_vms | length }} VMs from AWX"
+        msg: "Processed {{ netbox_vms | default([]) | length }} VMs from AWX"
 
     - name: "Test NetBox connectivity"
       uri:
@@ -167,10 +167,10 @@
       debug:
         msg: |
           Sync Plan:
-          - Total VMs from AWX: {{ netbox_vms | length }}
+          - Total VMs from AWX: {{ netbox_vms | default([]) | length }}
           - Already exist in NetBox: {{ existing_vm_names | length if existing_vm_names is defined else 0 }}
-          - Will create: {{ netbox_vms | rejectattr('name', 'in', existing_vm_names | default([])) | list | length }}
-          - Will skip: {{ netbox_vms | selectattr('name', 'in', existing_vm_names | default([])) | list | length }}
+          - Will create: {{ (netbox_vms | default([])) | rejectattr('name', 'in', existing_vm_names | default([])) | list | length }}
+          - Will skip: {{ (netbox_vms | default([])) | selectattr('name', 'in', existing_vm_names | default([])) | list | length }}
       when: sync_to_netbox | default(false)
 
     - name: "Create new VMs in NetBox"
@@ -193,7 +193,7 @@
         validate_certs: false
         status_code: [200, 201]
       register: vm_create_results
-      loop: "{{ netbox_vms }}"
+      loop: "{{ netbox_vms | default([]) }}"
       loop_control:
         label: "{{ item.name }}"
       when: 
@@ -205,7 +205,7 @@
     - name: "Show sync results"
       debug:
         msg: |
-          AWX VMs: {{ netbox_vms | length }}
+          AWX VMs: {{ netbox_vms | default([]) | length }}
           Existing in NetBox: {{ existing_vm_names | length if existing_vm_names is defined else 0 }}
           Created: {{ vm_create_results.results | selectattr('status', 'defined') | selectattr('status', 'in', [200, 201]) | list | length if vm_create_results is defined and vm_create_results.results is defined else 0 }}
           Errors: {{ vm_create_results.results | selectattr('status', 'defined') | rejectattr('status', 'in', [200, 201]) | list | length if vm_create_results is defined and vm_create_results.results is defined else 0 }}
