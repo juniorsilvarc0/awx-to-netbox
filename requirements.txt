@@ -1,0 +1,23 @@
+# AWX to NetBox Sync - Python Dependencies
+
+# Core HTTP requests library
+requests>=2.28.0
+
+# JSON handling (built-in, but explicit version for clarity)
+# json - built-in module
+
+# URL parsing and handling
+urllib3>=1.26.0
+
+# For SSL certificate handling
+certifi>=2022.12.7
+
+# Optional: For better JSON pretty printing
+# jq would be external tool, but we use Python's json module
+
+# Future NetBox integration
+# pynetbox>=6.6.0  # Uncomment when adding NetBox sync
+
+# Development/Testing (optional)
+# pytest>=7.0.0
+# requests-mock>=1.10.0
