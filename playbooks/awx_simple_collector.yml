@@ -532,7 +532,13 @@
           📈 Resultados da sincronização:
           {% set success_results = vm_sync_results.results | selectattr('status', 'in', [200, 201]) | list %}
           {% set exists_results = vm_sync_results.results | selectattr('status', 'equalto', 400) | list %}
-          {% set error_results = vm_sync_results.results | selectattr('status', 'not in', [200, 201, 400]) | list %}
+          {% set all_results = vm_sync_results.results | list %}
+          {% set error_results = [] %}
+          {% for result in all_results %}
+          {% if result.status not in [200, 201, 400] %}
+          {% set _ = error_results.append(result) %}
+          {% endif %}
+          {% endfor %}
           - ✅ Criadas/Atualizadas: {{ success_results | length }}
           - ⚠️ Erros 400 (possível duplicata): {{ exists_results | length }}
           - ❌ Outros erros: {{ error_results | length }}
