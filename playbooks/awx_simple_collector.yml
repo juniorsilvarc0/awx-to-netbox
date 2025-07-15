@@ -113,6 +113,8 @@
           - Inventory names: {{ target_inventories | map(attribute='name') | list }}
           - Filter used: {{ inventory_filter | default('VMware Inventory') }}
           - System hosts filtered: {{ (all_hosts | length) - (filtered_hosts | length) }}
+          - Target inventories IDs: {{ target_inventories | map(attribute='id') | list }}
+          - First 10 host names: {{ filtered_hosts[:10] | map(attribute='name') | list }}
 
     - name: "Get host details"
       uri:
@@ -166,7 +168,12 @@
 
     - name: "Show summary"
       debug:
-        msg: "Processed {{ netbox_vms | default([]) | length }} VMs from AWX"
+        msg: |
+          Processing Summary:
+          - Filtered hosts: {{ filtered_hosts | length }}
+          - Host details fetched: {{ host_details.results | length }}
+          - Processed netbox_vms: {{ netbox_vms | default([]) | length }}
+          - VM names: {{ (netbox_vms | default([]) | map(attribute='name') | list)[:10] | join(', ') }}{{ '...' if (netbox_vms | default([]) | length) > 10 else '' }}
 
     - name: "Test NetBox connectivity"
       uri:
