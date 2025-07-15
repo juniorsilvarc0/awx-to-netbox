@@ -620,6 +620,13 @@
           - Apenas novas VMs são adicionadas
           - Zero duplicatas garantidas
           
+          {% if vm_create_results is defined and vm_create_results.results %}
+          🔍 Detalhes das criações:
+          {% for result in vm_create_results.results %}
+          - {{ result.item.name }}: {{ 'Sucesso' if result.status in [200, 201] else 'Erro' }}
+          {% endfor %}
+          {% endif %}
+          
           {% endif %}
           
           🏢 Infraestrutura NetBox:
