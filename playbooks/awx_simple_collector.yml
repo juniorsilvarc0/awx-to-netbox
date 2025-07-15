@@ -36,7 +36,7 @@
 
     - name: "📦 Buscar inventários disponíveis"
       uri:
-        url: "{{ awx_url | default('http://10.0.100.159:8013') }}/api/v2/inventories/"
+        url: "{{ awx_url | default('http://10.0.100.159:8013') }}/api/v2/inventories/?page_size=10000"
         method: GET
         user: "{{ lookup('env', 'AWX_USERNAME') }}"
         password: "{{ lookup('env', 'AWX_PASSWORD') }}"
@@ -54,9 +54,9 @@
             list
           }}
 
-    - name: "🖥️ Buscar hosts dos inventários selecionados"
+    - name: "🖥️ Buscar TODOS os hosts dos inventários selecionados (sem paginação)"
       uri:
-        url: "{{ awx_url | default('http://10.0.100.159:8013') }}/api/v2/inventories/{{ item.id }}/hosts/"
+        url: "{{ awx_url | default('http://10.0.100.159:8013') }}/api/v2/inventories/{{ item.id }}/hosts/?page_size=10000"
         method: GET
         user: "{{ lookup('env', 'AWX_USERNAME') }}"
         password: "{{ lookup('env', 'AWX_PASSWORD') }}"
