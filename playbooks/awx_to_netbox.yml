@@ -4,26 +4,18 @@
   gather_facts: false
 
   tasks:
-    - name: Verificar variáveis de ambiente
-      debug:
-        msg: |
-          Verificando variáveis:
-          - AWX_USERNAME: {{ AWX_USERNAME | default('NÃO DEFINIDO') }}
-          - AWX_PASSWORD: {{ 'DEFINIDO' if AWX_PASSWORD is defined else 'NÃO DEFINIDO' }}
-          - NETBOX_API: {{ NETBOX_API | default('NÃO DEFINIDO') }}
-          - NETBOX_TOKEN: {{ 'DEFINIDO' if NETBOX_TOKEN is defined else 'NÃO DEFINIDO' }}
-
     - name: Executar script Python diretamente do repositório
-      ansible.builtin.command: >
+      ansible.builtin.shell: |
+        echo "🔍 Verificando variáveis..."
+        echo "AWX_USERNAME: ${AWX_USERNAME:-'NÃO DEFINIDO'}"
+        echo "AWX_PASSWORD: ${AWX_PASSWORD:+'DEFINIDO'}"
+        echo "NETBOX_API: ${NETBOX_API:-'NÃO DEFINIDO'}"
+        echo "NETBOX_TOKEN: ${NETBOX_TOKEN:+'DEFINIDO'}"
+        echo ""
+        echo "🚀 Executando script Python..."
         python3 scripts/awx-netbox.py
       args:
         chdir: "{{ ansible_env.ANSIBLE_PROJECT_DIR | default('.') }}"
-      environment:
-        AWX_URL: "http://10.0.100.159:8013"
-        AWX_USERNAME: "{{ AWX_USERNAME }}"
-        AWX_PASSWORD: "{{ AWX_PASSWORD }}"
-        NETBOX_API: "{{ NETBOX_API }}"
-        NETBOX_TOKEN: "{{ NETBOX_TOKEN }}"
       register: script_result
 
     - name: Mostrar resultado do script
