@@ -246,6 +246,32 @@
         - sync_to_netbox | default(false)
         - existing_vm_names is not defined
 
+    - name: "🔍 Buscar detalhes completos das VMs existentes no NetBox"
+      uri:
+        url: "{{ lookup('env', 'NETBOX_API') }}/api/virtualization/virtual-machines/?name={{ item.name }}"
+        method: GET
+        headers:
+          Authorization: "Token {{ lookup('env', 'NETBOX_TOKEN') }}"
+        validate_certs: false
+        return_content: true
+      register: existing_vm_details
+      loop: "{{ netbox_vms | default([]) }}"
+      loop_control:
+        label: "{{ item.name }}"
+      when: 
+        - sync_to_netbox | default(false)
+        - item.name in (existing_vm_names | default([]))
+      failed_when: false
+
+    - name: "📋 Consolidar dados de VMs existentes"
+      set_fact:
+        existing_vms_data: "{{ existing_vms_data | default([]) + (item.json.results if item.json.results else []) }}"
+      loop: "{{ existing_vm_details.results | default([]) }}"
+      when: 
+        - sync_to_netbox | default(false)
+        - item.json is defined
+        - item.json.results is defined
+
     - name: "🖥️ Criar apenas VMs que não existem no NetBox"
       uri:
         url: "{{ lookup('env', 'NETBOX_API') }}/api/virtualization/virtual-machines/"
@@ -277,6 +303,38 @@
         - item.name not in (existing_vm_names | default([]))
       failed_when: false
 
+    - name: "🔄 Atualizar VMs existentes no NetBox"
+      uri:
+        url: "{{ lookup('env', 'NETBOX_API') }}/api/virtualization/virtual-machines/{{ vm_id }}/"
+        method: PATCH
+        headers:
+          Authorization: "Token {{ lookup('env', 'NETBOX_TOKEN') }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          name: "{{ item.name }}"
+          status: "{{ item.status }}"
+          vcpus: "{{ item.vcpus | int }}"
+          memory: "{{ item.memory_mb | int }}"
+          comments: |
+            Atualizado do AWX - {{ sync_timestamp }}
+            AWX ID: {{ item.awx_id }}
+            Platform: {{ item.platform }}
+        validate_certs: false
+        status_code: [200, 201]
+      register: vm_update_results
+      loop: "{{ netbox_vms }}"
+      loop_control:
+        label: "{{ item.name }}"
+      vars:
+        vm_id: "{{ (existing_vms_data | default([]) | selectattr('name', 'equalto', item.name) | map(attribute='id') | first) | default('') }}"
+      when: 
+        - sync_to_netbox | default(false)
+        - not (dry_run | default(true))
+        - item.name in (existing_vm_names | default([]))
+        - vm_id != ""
+      failed_when: false
+
     - name: "🌐 Criar endereços IP no NetBox para VMs com IPs definidos"
       uri:
         url: "{{ lookup('env', 'NETBOX_API') }}/api/ipam/ip-addresses/"
@@ -288,7 +346,7 @@
         body:
           address: "{{ ip_item }}/24"
           assigned_object_type: "virtualization.virtualmachine"
-          assigned_object_id: "{{ vm_create_results.results | selectattr('item.name', 'equalto', item.name) | map(attribute='json.id') | first | default('') }}"
+          assigned_object_id: "{{ vm_netbox_id }}"
           status: "active"
           dns_name: "{{ item.name | lower }}"
           description: "IP da VM {{ item.name }} - Importado do AWX {{ sync_timestamp }}"
@@ -301,14 +359,17 @@
         loop_var: item
       vars:
         ip_item: "{{ item.primary_ip4 if item.primary_ip4 and item.primary_ip4 != '' else '' }}"
+        # Busca ID da VM: primeiro tenta VMs criadas, depois VMs existentes
+        vm_created_id: "{{ (vm_create_results.results | default([]) | selectattr('item.name', 'equalto', item.name) | map(attribute='json.id') | first) | default('') }}"
+        vm_existing_id: "{{ (existing_vms_data | default([]) | selectattr('name', 'equalto', item.name) | map(attribute='id') | first) | default('') }}"
+        vm_netbox_id: "{{ vm_created_id if vm_created_id != '' else vm_existing_id }}"
       when: 
         - sync_to_netbox | default(false)
         - not (dry_run | default(true))
         - item.primary_ip4 is defined
         - item.primary_ip4 != ""
         - item.primary_ip4 != None
-        - vm_create_results is defined
-        - vm_create_results.results is defined
+        - vm_netbox_id != ""
       failed_when: false
 
     - name: "🔗 Atualizar VM com IP primário no NetBox"
@@ -328,17 +389,19 @@
       loop_control:
         label: "{{ item.name }}"
       vars:
-        vm_id: "{{ vm_create_results.results | selectattr('item.name', 'equalto', item.name) | map(attribute='json.id') | first | default('') }}"
+        # Busca ID da VM: primeiro tenta VMs criadas, depois VMs existentes
+        vm_created_id: "{{ (vm_create_results.results | default([]) | selectattr('item.name', 'equalto', item.name) | map(attribute='json.id') | first) | default('') }}"
+        vm_existing_id: "{{ (existing_vms_data | default([]) | selectattr('name', 'equalto', item.name) | map(attribute='id') | first) | default('') }}"
+        vm_id: "{{ vm_created_id if vm_created_id != '' else vm_existing_id }}"
       when: 
         - sync_to_netbox | default(false)
         - not (dry_run | default(true))
         - item.primary_ip4 is defined
         - item.primary_ip4 != ""
         - item.primary_ip4 != None
-        - vm_create_results is defined
-        - vm_create_results.results is defined
         - ip_create_results is defined
         - ip_create_results.results is defined
+        - vm_id != ""
       failed_when: false
 
     - name: "📊 Resumo da sincronização NetBox"
@@ -355,11 +418,20 @@
           🖥️ VMs do AWX: {{ (netbox_vms | default([])) | length }}
           📋 VMs existentes no NetBox: {{ existing_vm_names | length if existing_vm_names is defined else 0 }}
           🆕 VMs para criar: {{ ((netbox_vms | default([])) | rejectattr('name', 'in', existing_vm_names) | list | length) if existing_vm_names is defined else (netbox_vms | default([])) | length }}
+          🔄 VMs para atualizar: {{ ((netbox_vms | default([])) | selectattr('name', 'in', existing_vm_names) | list | length) if existing_vm_names is defined else 0 }}
           
-          {% if not (dry_run | default(true)) and (vm_create_results | default({})).results is defined %}
+          {% if not (dry_run | default(true)) %}
+          {% if (vm_create_results | default({})).results is defined %}
           {% set create_results = vm_create_results.results | default([]) %}
           ✅ VMs criadas: {{ create_results | selectattr('status', 'defined') | selectattr('status', 'in', [200, 201]) | list | length }}
-          ❌ Erros VMs: {{ create_results | selectattr('status', 'defined') | rejectattr('status', 'in', [200, 201]) | list | length }}
+          ❌ Erros criação: {{ create_results | selectattr('status', 'defined') | rejectattr('status', 'in', [200, 201]) | list | length }}
+          {% endif %}
+          
+          {% if (vm_update_results | default({})).results is defined %}
+          {% set update_results = vm_update_results.results | default([]) %}
+          🔄 VMs atualizadas: {{ update_results | selectattr('status', 'defined') | selectattr('status', 'in', [200, 201]) | list | length }}
+          ❌ Erros atualização: {{ update_results | selectattr('status', 'defined') | rejectattr('status', 'in', [200, 201]) | list | length }}
+          {% endif %}
           
           {% set vms_with_ips = (netbox_vms | default([])) | selectattr('primary_ip4', 'defined') | selectattr('primary_ip4', 'ne', '') | list %}
           🌐 VMs com IPs: {{ vms_with_ips | length }}
@@ -370,14 +442,14 @@
           ❌ Erros IPs: {{ ip_results | selectattr('status', 'defined') | rejectattr('status', 'in', [200, 201]) | list | length }}
           {% endif %}
           
-          {% if vm_update_results is defined and vm_update_results.results is defined %}
-          {% set update_results = vm_update_results.results | default([]) %}
-          🔗 VMs atualizadas com IP primário: {{ update_results | selectattr('status', 'defined') | selectattr('status', 'in', [200, 201]) | list | length }}
+          {% if vm_update_results is defined and vm_update_results.results is defined and vm_update_results != vm_create_results %}
+          {% set ip_update_results = vm_update_results.results | default([]) %}
+          🔗 VMs atualizadas com IP primário: {{ ip_update_results | selectattr('status', 'defined') | selectattr('status', 'in', [200, 201]) | list | length }}
           {% endif %}
           {% endif %}
           
-          💡 Estratégia: APENAS CRIAR (sem duplicatas)
-          ✅ Zero duplicatas garantidas!
+          💡 Estratégia: CRIAR + ATUALIZAR
+          ✅ VMs e IPs sempre sincronizados!
       when: sync_to_netbox | default(false)
 
     - name: "🎯 Próximos passos"
