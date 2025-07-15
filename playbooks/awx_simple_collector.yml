@@ -272,6 +272,62 @@
         - item.json is defined
         - item.json.results is defined
 
+    - name: "🏢 Buscar sites existentes no NetBox"
+      uri:
+        url: "{{ lookup('env', 'NETBOX_API') }}/api/dcim/sites/"
+        method: GET
+        headers:
+          Authorization: "Token {{ lookup('env', 'NETBOX_TOKEN') }}"
+        validate_certs: false
+        return_content: true
+      register: existing_sites_check
+      when: sync_to_netbox | default(false)
+      failed_when: false
+
+    - name: "📋 Mapear sites existentes"
+      set_fact:
+        existing_sites_map: "{{ existing_sites_map | default({}) | combine({item.name: item.id}) }}"
+      loop: "{{ existing_sites_check.json.results | default([]) }}"
+      when: 
+        - sync_to_netbox | default(false)
+        - existing_sites_check.json is defined
+        - existing_sites_check.json.results is defined
+
+    - name: "🏗️ Criar sites que não existem"
+      uri:
+        url: "{{ lookup('env', 'NETBOX_API') }}/api/dcim/sites/"
+        method: POST
+        headers:
+          Authorization: "Token {{ lookup('env', 'NETBOX_TOKEN') }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          name: "{{ datacenter_item }}"
+          slug: "{{ datacenter_item | lower | regex_replace('[^a-z0-9-]', '-') }}"
+          description: "Site criado automaticamente do AWX - {{ sync_timestamp }}"
+        validate_certs: false
+        status_code: [200, 201]
+      register: site_create_results
+      loop: "{{ (netbox_vms | default([]) | map(attribute='datacenter') | unique | list) }}"
+      loop_control:
+        label: "{{ datacenter_item }}"
+        loop_var: datacenter_item
+      when: 
+        - sync_to_netbox | default(false)
+        - not (dry_run | default(true))
+        - datacenter_item not in (existing_sites_map.keys() | list)
+      failed_when: false
+
+    - name: "📋 Atualizar mapa de sites com novos criados"
+      set_fact:
+        existing_sites_map: "{{ existing_sites_map | default({}) | combine({item.datacenter_item: item.json.id}) }}"
+      loop: "{{ site_create_results.results | default([]) }}"
+      when: 
+        - sync_to_netbox | default(false)
+        - item.json is defined
+        - item.json.id is defined
+        - item.status in [200, 201]
+
     - name: "🖥️ Criar apenas VMs que não existem no NetBox"
       uri:
         url: "{{ lookup('env', 'NETBOX_API') }}/api/virtualization/virtual-machines/"
@@ -283,7 +339,7 @@
         body:
           name: "{{ item.name }}"
           status: "{{ item.status }}"
-          site: 1
+          site: "{{ existing_sites_map[item.datacenter] | default(1) }}"
           cluster: 1
           vcpus: "{{ item.vcpus | int }}"
           memory: "{{ item.memory_mb | int }}"
@@ -314,6 +370,7 @@
         body:
           name: "{{ item.name }}"
           status: "{{ item.status }}"
+          site: "{{ existing_sites_map[item.datacenter] | default(1) }}"
           vcpus: "{{ item.vcpus | int }}"
           memory: "{{ item.memory_mb | int }}"
           comments: |
@@ -522,8 +579,13 @@
           {% endif %}
           {% endif %}
           
+          {% if site_create_results is defined and site_create_results.results is defined %}
+          {% set new_sites = site_create_results.results | default([]) %}
+          🏢 Sites criados: {{ new_sites | selectattr('status', 'defined') | selectattr('status', 'in', [200, 201]) | list | length }}
+          {% endif %}
+          
           💡 Estratégia: CRIAR + ATUALIZAR
-          ✅ VMs e IPs sempre sincronizados!
+          ✅ VMs, IPs e Sites sempre sincronizados!
       when: sync_to_netbox | default(false)
 
     - name: "🐛 Debug - Erros de Atualização de VMs"
