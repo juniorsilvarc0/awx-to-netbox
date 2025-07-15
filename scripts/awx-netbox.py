@@ -4,11 +4,17 @@ import traceback
 import requests
 import json
 import os
+import sys
 from datetime import datetime
 from urllib3.exceptions import InsecureRequestWarning
 
 # Desabilita warnings SSL inseguros
 requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
+
+# Função para print com flush imediato
+def print_flush(msg):
+    print(msg, flush=True)
+    sys.stdout.flush()
 
 # === VARIÁVEIS DE AMBIENTE (são injetadas via credenciais do AWX) ===
 AWX_URL = os.getenv("AWX_URL", "http://10.0.100.159:8013")
@@ -32,12 +38,12 @@ if not NETBOX_TOKEN:
     print("❌ Erro: NETBOX_TOKEN não definido!")
     exit(1)
 
-print(f"✅ Configuração:")
-print(f"   AWX URL: {AWX_URL}")
-print(f"   AWX User: {AWX_USER}")
-print(f"   NetBox URL: {NETBOX_URL}")
-print(f"   NetBox Token: {'*' * 20}")
-print()
+print_flush(f"✅ Configuração:")
+print_flush(f"   AWX URL: {AWX_URL}")
+print_flush(f"   AWX User: {AWX_USER}")
+print_flush(f"   NetBox URL: {NETBOX_URL}")
+print_flush(f"   NetBox Token: {'*' * 20}")
+print_flush("")
 
 FORCE_SITE = "ATI-SLC-HCI"
 INTERFACE_TYPE = "1000base-t"
@@ -56,12 +62,12 @@ class SimpleAWXCollector:
         self.session.verify = False
 
     def list_hosts(self):
-        print("🔍 Conectando ao AWX...")
+        print_flush("🔍 Conectando ao AWX...")
         try:
             inv_url = f"{AWX_URL}/api/v2/inventories/"
             invs = self._paginated_get(inv_url)
             if not invs:
-                print("❌ Nenhum inventário encontrado")
+                print_flush("❌ Nenhum inventário encontrado")
                 return []
 
             # Procurar apenas o inventário "VMware Inventory"
@@ -72,26 +78,26 @@ class SimpleAWXCollector:
                     break
             
             if not vmware_inv:
-                print("❌ Inventário 'VMware Inventory' não encontrado!")
+                print_flush("❌ Inventário 'VMware Inventory' não encontrado!")
                 available_invs = [inv["name"] for inv in invs]
-                print(f"   Inventários disponíveis: {available_invs}")
+                print_flush(f"   Inventários disponíveis: {available_invs}")
                 return []
 
             inv_id = vmware_inv["id"]
             inv_name = vmware_inv["name"]
-            print(f"📦 Coletando hosts do inventário '{inv_name}' (ID {inv_id})")
+            print_flush(f"📦 Coletando hosts do inventário '{inv_name}' (ID {inv_id})")
             
             try:
                 url = f"{AWX_URL}/api/v2/inventories/{inv_id}/hosts/"
                 hosts_raw = self._paginated_get(url)
-                print(f"   └─ Encontrados {len(hosts_raw)} hosts")
+                print_flush(f"   └─ Encontrados {len(hosts_raw)} hosts")
                 
                 all_hosts = []
                 for host in hosts_raw:
                     try:
                         vars = json.loads(host.get("variables", "{}"))
                     except json.JSONDecodeError:
-                        print(f"⚠️ Ignorando host {host['name']} - variáveis inválidas")
+                        print_flush(f"⚠️ Ignorando host {host['name']} - variáveis inválidas")
                         continue
 
                     vars["vm_name"] = vars.get("vm_name", host["name"])
@@ -104,14 +110,14 @@ class SimpleAWXCollector:
                     all_hosts.append(vars)
                     
             except Exception as e:
-                print(f"❌ Erro ao processar inventário {inv_name}: {e}")
+                print_flush(f"❌ Erro ao processar inventário {inv_name}: {e}")
                 return []
 
-            print(f"✅ Total de VMs encontradas: {len(all_hosts)}")
+            print_flush(f"✅ Total de VMs encontradas: {len(all_hosts)}")
             return all_hosts
             
         except Exception as e:
-            print(f"❌ Erro fatal na coleta do AWX: {e}")
+            print_flush(f"❌ Erro fatal na coleta do AWX: {e}")
             raise
 
     def _paginated_get(self, url):
@@ -119,7 +125,7 @@ class SimpleAWXCollector:
         page = 1
         while url:
             try:
-                print(f"   └─ Página {page}: {url}")
+                print_flush(f"   └─ Página {page}: {url}")
                 r = self.session.get(url)
                 r.raise_for_status()
                 data = r.json()
@@ -136,13 +142,13 @@ class SimpleAWXCollector:
                 else:
                     url = None
                     
-                print(f"   └─ Página {page}: {len(page_results)} itens, total: {len(results)}")
+                print_flush(f"   └─ Página {page}: {len(page_results)} itens, total: {len(results)}")
                 page += 1
             except requests.exceptions.RequestException as e:
-                print(f"❌ Erro na requisição: {e}")
+                print_flush(f"❌ Erro na requisição: {e}")
                 break
             except json.JSONDecodeError as e:
-                print(f"❌ Erro ao decodificar JSON: {e}")
+                print_flush(f"❌ Erro ao decodificar JSON: {e}")
                 break
         return results
 
@@ -235,15 +241,18 @@ def update_primary_ip(vm_id, ip_id):
 
 # === EXECUÇÃO PRINCIPAL ===
 def main():
-    print("🚀 Iniciando sincronização AWX → NetBox...")
+    print_flush("🚀 Iniciando sincronização AWX → NetBox...")
     collector = SimpleAWXCollector()
     vms = collector.list_hosts()
 
-    for vm in vms:
+    print_flush(f"🔄 Processando {len(vms)} VMs...")
+    for i, vm in enumerate(vms, 1):
         try:
             if not vm.get("vm_name"):
                 continue
 
+            print_flush(f"📝 ({i}/{len(vms)}) Processando VM: {vm.get('vm_name')}")
+            
             vm_id = ensure_vm(vm)
             if not vm_id:
                 continue
@@ -259,7 +268,9 @@ def main():
                     update_primary_ip(vm_id, ip_id)
 
         except Exception as e:
-            print(f"❌ Erro ao processar VM {vm.get('vm_name')}: {e}")
+            print_flush(f"❌ Erro ao processar VM {vm.get('vm_name')}: {e}")
             traceback.print_exc()
+            
+    print_flush("🎉 Sincronização concluída!")
 if __name__ == "__main__":
     main()
