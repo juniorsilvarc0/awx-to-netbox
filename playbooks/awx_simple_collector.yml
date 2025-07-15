@@ -277,6 +277,70 @@
         - item.name not in (existing_vm_names | default([]))
       failed_when: false
 
+    - name: "🌐 Criar endereços IP no NetBox para VMs com IPs definidos"
+      uri:
+        url: "{{ lookup('env', 'NETBOX_API') }}/api/ipam/ip-addresses/"
+        method: POST
+        headers:
+          Authorization: "Token {{ lookup('env', 'NETBOX_TOKEN') }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          address: "{{ ip_item }}/24"
+          assigned_object_type: "virtualization.virtualmachine"
+          assigned_object_id: "{{ vm_create_results.results | selectattr('item.name', 'equalto', item.name) | map(attribute='json.id') | first | default('') }}"
+          status: "active"
+          dns_name: "{{ item.name | lower }}"
+          description: "IP da VM {{ item.name }} - Importado do AWX {{ sync_timestamp }}"
+        validate_certs: false
+        status_code: [200, 201]
+      register: ip_create_results
+      loop: "{{ netbox_vms | default([]) }}"
+      loop_control:
+        label: "{{ item.name }} - {{ ip_item if ip_item else 'Sem IP' }}"
+        loop_var: item
+      vars:
+        ip_item: "{{ item.primary_ip4 if item.primary_ip4 and item.primary_ip4 != '' else '' }}"
+      when: 
+        - sync_to_netbox | default(false)
+        - not (dry_run | default(true))
+        - item.primary_ip4 is defined
+        - item.primary_ip4 != ""
+        - item.primary_ip4 != null
+        - vm_create_results is defined
+        - vm_create_results.results is defined
+      failed_when: false
+
+    - name: "🔗 Atualizar VM com IP primário no NetBox"
+      uri:
+        url: "{{ lookup('env', 'NETBOX_API') }}/api/virtualization/virtual-machines/{{ vm_id }}/"
+        method: PATCH
+        headers:
+          Authorization: "Token {{ lookup('env', 'NETBOX_TOKEN') }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          primary_ip4: "{{ ip_create_results.results | selectattr('item.name', 'equalto', item.name) | map(attribute='json.id') | first | default('') }}"
+        validate_certs: false
+        status_code: [200, 201]
+      register: vm_update_results
+      loop: "{{ netbox_vms | default([]) }}"
+      loop_control:
+        label: "{{ item.name }}"
+      vars:
+        vm_id: "{{ vm_create_results.results | selectattr('item.name', 'equalto', item.name) | map(attribute='json.id') | first | default('') }}"
+      when: 
+        - sync_to_netbox | default(false)
+        - not (dry_run | default(true))
+        - item.primary_ip4 is defined
+        - item.primary_ip4 != ""
+        - item.primary_ip4 != null
+        - vm_create_results is defined
+        - vm_create_results.results is defined
+        - ip_create_results is defined
+        - ip_create_results.results is defined
+      failed_when: false
+
     - name: "📊 Resumo da sincronização NetBox"
       debug:
         msg: |
@@ -295,7 +359,21 @@
           {% if not (dry_run | default(true)) and (vm_create_results | default({})).results is defined %}
           {% set create_results = vm_create_results.results | default([]) %}
           ✅ VMs criadas: {{ create_results | selectattr('status', 'defined') | selectattr('status', 'in', [200, 201]) | list | length }}
-          ❌ Erros: {{ create_results | selectattr('status', 'defined') | rejectattr('status', 'in', [200, 201]) | list | length }}
+          ❌ Erros VMs: {{ create_results | selectattr('status', 'defined') | rejectattr('status', 'in', [200, 201]) | list | length }}
+          
+          {% set vms_with_ips = (netbox_vms | default([])) | selectattr('primary_ip4', 'defined') | selectattr('primary_ip4', 'ne', '') | list %}
+          🌐 VMs com IPs: {{ vms_with_ips | length }}
+          
+          {% if ip_create_results is defined and ip_create_results.results is defined %}
+          {% set ip_results = ip_create_results.results | default([]) %}
+          ✅ IPs criados: {{ ip_results | selectattr('status', 'defined') | selectattr('status', 'in', [200, 201]) | list | length }}
+          ❌ Erros IPs: {{ ip_results | selectattr('status', 'defined') | rejectattr('status', 'in', [200, 201]) | list | length }}
+          {% endif %}
+          
+          {% if vm_update_results is defined and vm_update_results.results is defined %}
+          {% set update_results = vm_update_results.results | default([]) %}
+          🔗 VMs atualizadas com IP primário: {{ update_results | selectattr('status', 'defined') | selectattr('status', 'in', [200, 201]) | list | length }}
+          {% endif %}
           {% endif %}
           
           💡 Estratégia: APENAS CRIAR (sem duplicatas)
