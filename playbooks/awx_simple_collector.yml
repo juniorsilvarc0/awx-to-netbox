@@ -59,9 +59,9 @@
             list
           }}
 
-    - name: "Get hosts from inventories"
+    - name: "Get hosts from inventories with larger page size"
       uri:
-        url: "{{ awx_url | default('http://10.0.100.159:8013') }}/api/v2/inventories/{{ item.id }}/hosts/?page_size=10000"
+        url: "{{ awx_url | default('http://10.0.100.159:8013') }}/api/v2/inventories/{{ item.id }}/hosts/?page_size=2000"
         method: GET
         user: "{{ lookup('env', 'AWX_USERNAME') }}"
         password: "{{ lookup('env', 'AWX_PASSWORD') }}"
@@ -72,6 +72,18 @@
       loop: "{{ target_inventories }}"
       loop_control:
         label: "{{ item.name }}"
+
+    - name: "Debug inventory hosts"
+      debug:
+        msg: |
+          Inventory: {{ item.item.name }} (ID: {{ item.item.id }})
+          Retrieved: {{ item.json.results | length }}
+          Total count: {{ item.json.count }}
+          Has next page: {{ item.json.next is not none }}
+          Next URL: {{ item.json.next | default('none') }}
+      loop: "{{ inventory_hosts.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
 
     - name: "Consolidate hosts list"
       set_fact:
