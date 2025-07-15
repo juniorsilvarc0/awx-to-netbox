@@ -571,8 +571,9 @@
     - name: "🧪 Simulação de sincronização (DRY-RUN)"
       debug:
         msg: |
-          🧪 DRY-RUN: Simulando criação da VM {{ item.name }} no NetBox
+          🧪 DRY-RUN: {{ 'Criaria' if item.name not in existing_vm_names else 'Ignoraria (já existe)' }} VM {{ item.name }}
           
+          {% if item.name not in existing_vm_names %}
           📊 Dados que seriam enviados:
           - Nome: {{ item.name }}
           - Status: {{ item.status }}
@@ -582,8 +583,7 @@
           - Memória: {{ item.memory_mb }}MB
           - IP Primário: {{ item.primary_ip4 }}
           - Platform: {{ item.platform }}
-          
-          🔗 URL de criação: {{ lookup('env', 'NETBOX_API') }}/api/virtualization/virtual-machines/
+          {% endif %}
       loop: "{{ netbox_vms }}"
       loop_control:
         label: "{{ item.name }}"
@@ -606,31 +606,19 @@
           
           {% if not (dry_run | default(true)) %}
           📈 Resultados da sincronização:
-          {% set create_results = vm_create_results.results | default([]) %}
-          {% set update_results = vm_update_results.results | default([]) %}
-          {% set created_success = create_results | selectattr('status', 'in', [200, 201]) | list %}
-          {% set updated_success = update_results | selectattr('status', 'equalto', 200) | list %}
-          {% set create_errors = create_results | selectattr('status', 'not in', [200, 201]) | list %}
-          {% set update_errors = update_results | selectattr('status', 'not in', [200]) | list %}
           
-          🆕 Operações de CRIAÇÃO:
-          - ✅ VMs criadas: {{ created_success | length }}
-          - ❌ Erros na criação: {{ create_errors | length }}
+          🆕 Para CRIAR: {{ vms_to_create | length }} VMs
+          ⏭️ JÁ EXISTEM: {{ vms_already_exist | length }} VMs (ignoradas)
           
-          🔄 Operações de ATUALIZAÇÃO:
-          - ✅ VMs atualizadas: {{ updated_success | length }}
-          - ❌ Erros na atualização: {{ update_errors | length }}
-          
-          📊 Total:
-          - ✅ Sucessos: {{ (created_success | length) + (updated_success | length) }}
-          - ❌ Erros: {{ (create_errors | length) + (update_errors | length) }}
-          
-          {% if (create_errors | length) > 0 or (update_errors | length) > 0 %}
-          🔍 Detalhes dos erros:
-          {% for error in create_errors + update_errors %}
-          - {{ error.item.name }}: {{ error.json | default(error.msg) | default('Erro desconhecido') }}
-          {% endfor %}
+          {% if vm_create_results is defined %}
+          ✅ Criações realizadas: {{ vm_create_results.results | selectattr('status', 'in', [200, 201]) | list | length }}
+          ❌ Erros na criação: {{ vm_create_results.results | selectattr('status', 'not in', [200, 201]) | list | length }}
           {% endif %}
+          
+          💡 Estratégia: APENAS CRIAR (não atualizar)
+          - VMs existentes são preservadas
+          - Apenas novas VMs são adicionadas
+          - Zero duplicatas garantidas
           
           {% endif %}
           
