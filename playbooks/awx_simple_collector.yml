@@ -128,6 +128,7 @@
           vcpus: "{{ (host_vars.vm_cpu_count | default(1) | int) }}"
           memory_gb: "{{ (host_vars.vm_memory_gb | default(1) | float) }}"
           memory_mb: "{{ ((host_vars.vm_memory_gb | default(1) | float) * 1024) | int }}"
+          disk_gb: "{{ (host_vars.vm_disk_total_gb | default(0) | float) }}"
           ansible_host: "{{ host_vars.ansible_host | default('') }}"
           primary_ip4: "{{ host_vars.ansible_host | default('') }}"
           vm_ip_addresses: "{{ host_vars.vm_ip_addresses | default([]) }}"
@@ -156,6 +157,7 @@
           💻 Hardware:
             - vCPUs: {{ item.vcpus }}
             - Memória: {{ item.memory_gb }}GB ({{ item.memory_mb }}MB)
+            - Disco: {{ item.disk_gb }}GB
           
           🌐 Rede:
             - IP Primário: {{ item.primary_ip4 if item.primary_ip4 else 'N/A' }}
@@ -343,6 +345,7 @@
           cluster: 1
           vcpus: "{{ item.vcpus | int }}"
           memory: "{{ item.memory_mb | int }}"
+          disk: "{{ (item.disk_gb | default(0) | float * 1024) | int }}"
           comments: |
             Importado do AWX - {{ sync_timestamp }}
             AWX ID: {{ item.awx_id }}
@@ -373,6 +376,7 @@
           site: "{{ existing_sites_map[item.datacenter] | default(1) }}"
           vcpus: "{{ item.vcpus | int }}"
           memory: "{{ item.memory_mb | int }}"
+          disk: "{{ (item.disk_gb | default(0) | float * 1024) | int }}"
           comments: |
             Atualizado do AWX - {{ sync_timestamp }}
             AWX ID: {{ item.awx_id }}
