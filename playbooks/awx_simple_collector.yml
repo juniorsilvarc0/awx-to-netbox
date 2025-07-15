@@ -96,7 +96,7 @@
       set_fact:
         netbox_vms: "{{ netbox_vms | default([]) + [vm_data] }}"
       vars:
-        host_detail: "{{ host_details.results[ansible_loop.index0].json }}"
+        host_detail: "{{ host_details.results[my_idx].json }}"
         raw_vars: "{{ host_detail.variables | default('') }}"
         host_vars: >-
           {%- if raw_vars is string and raw_vars != '' and raw_vars != '{}' -%}
@@ -117,6 +117,7 @@
       loop: "{{ filtered_hosts }}"
       loop_control:
         extended: true
+        index_var: my_idx
         label: "{{ item.name }}"
       failed_when: false
 
@@ -162,6 +163,16 @@
         - sync_to_netbox | default(false)
         - existing_vm_names is not defined
 
+    - name: "Show VM sync plan"
+      debug:
+        msg: |
+          Sync Plan:
+          - Total VMs from AWX: {{ netbox_vms | length }}
+          - Already exist in NetBox: {{ existing_vm_names | length if existing_vm_names is defined else 0 }}
+          - Will create: {{ netbox_vms | rejectattr('name', 'in', existing_vm_names | default([])) | list | length }}
+          - Will skip: {{ netbox_vms | selectattr('name', 'in', existing_vm_names | default([])) | list | length }}
+      when: sync_to_netbox | default(false)
+
     - name: "Create new VMs in NetBox"
       uri:
         url: "{{ lookup('env', 'NETBOX_API') }}/api/virtualization/virtual-machines/"
@@ -184,7 +195,7 @@
       register: vm_create_results
       loop: "{{ netbox_vms }}"
       loop_control:
-        label: "{{ ansible_loop.index0 + 1 }}/{{ netbox_vms | length }}"
+        label: "{{ item.name }}"
       when: 
         - sync_to_netbox | default(false)
         - not (dry_run | default(true))
