@@ -1,5 +1,5 @@
 ---
-- name: "🚀 AWX Simple Collector - Coleta dados via API AWX"
+- name: "🚀 AWX Simple Collector - Dados Essenciais para NetBox"
   hosts: localhost
   gather_facts: false
   
@@ -13,17 +13,6 @@
           🔗 AWX URL: {{ awx_url | default('http://10.0.100.159:8013') }}
       failed_when: not lookup('env', 'AWX_USERNAME') or not lookup('env', 'AWX_PASSWORD')
 
-    - name: "📋 Exibir configurações"
-      debug:
-        msg: |
-          🚀 AWX Simple Collector - Configurações:
-          🔗 AWX URL: {{ awx_url | default('http://10.0.100.159:8013') }}
-          👤 Usuário: {{ lookup('env', 'AWX_USERNAME') }}
-          📦 Filtro de inventários: {{ inventory_filter | default('VMware Inventory') }}
-          🖥️ Filtro de hosts: {{ host_filter | default('Nenhum') }}
-          📊 Modo: {{ 'Apenas Listar' if list_only | default(true) else 'Processar para NetBox' }}
-          📋 Mostrar detalhes: {{ 'Sim' if show_details | default(true) else 'Não' }}
-
     - name: "🔍 Testar conectividade com AWX"
       uri:
         url: "{{ awx_url | default('http://10.0.100.159:8013') }}/api/v2/"
@@ -36,22 +25,9 @@
       register: awx_connectivity
       failed_when: false
 
-    - name: "✅ Conectividade AWX"
-      debug:
-        msg: |
-          {% if awx_connectivity.status == 200 %}
-          ✅ Conectado com sucesso!
-          👤 Usuário atual: {{ awx_connectivity.json.current_user.username | default('Desconhecido') }}
-          📊 Versão AWX: {{ awx_connectivity.json.version | default('Desconhecida') }}
-          {% else %}
-          ❌ Falha na conectividade!
-          🔍 Status: {{ awx_connectivity.status | default('N/A') }}
-          📝 Erro: {{ awx_connectivity.msg | default('Conexão falhou') }}
-          {% endif %}
-
     - name: "❌ Falhar se não conseguir conectar"
       fail:
-        msg: "Não foi possível conectar ao AWX. Verifique URL, usuário e senha."
+        msg: "Não foi possível conectar ao AWX. Verifique credenciais."
       when: awx_connectivity.status != 200
 
     - name: "📦 Buscar inventários disponíveis"
@@ -65,14 +41,6 @@
         return_content: true
       register: awx_inventories
 
-    - name: "📊 Exibir inventários encontrados"
-      debug:
-        msg: |
-          📦 Inventários encontrados ({{ awx_inventories.json.count }}):
-          {% for inv in awx_inventories.json.results %}
-          - {{ inv.name }} (ID: {{ inv.id }}) - {{ inv.description | default('Sem descrição') }}
-          {% endfor %}
-
     - name: "🎯 Filtrar inventários alvo"
       set_fact:
         target_inventories: >-
@@ -81,20 +49,6 @@
             selectattr('name', 'in', (inventory_filter | default('VMware Inventory')).split(',') | map('trim')) | 
             list
           }}
-      when: inventory_filter is defined and inventory_filter != ""
-
-    - name: "🎯 Usar todos os inventários se não houver filtro"
-      set_fact:
-        target_inventories: "{{ awx_inventories.json.results }}"
-      when: inventory_filter is not defined or inventory_filter == ""
-
-    - name: "📋 Exibir inventários selecionados"
-      debug:
-        msg: |
-          🎯 Inventários selecionados para processamento:
-          {% for inv in target_inventories %}
-          - {{ inv.name }} (ID: {{ inv.id }})
-          {% endfor %}
 
     - name: "🖥️ Buscar hosts dos inventários selecionados"
       uri:
@@ -114,8 +68,6 @@
       set_fact:
         all_hosts: "{{ all_hosts | default([]) + item.json.results }}"
       loop: "{{ inventory_hosts.results }}"
-      loop_control:
-        label: "Inventário com {{ item.json.results | length }} hosts"
 
     - name: "🔍 Aplicar filtro de hosts"
       set_fact:
@@ -132,18 +84,6 @@
         filtered_hosts: "{{ all_hosts }}"
       when: host_filter is not defined or host_filter == ""
 
-    - name: "📊 Exibir resumo dos hosts"
-      debug:
-        msg: |
-          🖥️ Resumo dos hosts:
-          - Total encontrado: {{ all_hosts | length }}
-          - Após filtros: {{ filtered_hosts | length }}
-          
-          📋 Hosts selecionados:
-          {% for host in filtered_hosts %}
-          - {{ host.name }} (ID: {{ host.id }}) {{ '🟢' if host.enabled else '🔴' }}
-          {% endfor %}
-
     - name: "🔍 Buscar detalhes completos dos hosts"
       uri:
         url: "{{ awx_url | default('http://10.0.100.159:8013') }}/api/v2/hosts/{{ item.id }}/"
@@ -158,69 +98,113 @@
       loop_control:
         label: "{{ item.name }}"
 
-    - name: "👥 Buscar grupos dos hosts"
-      uri:
-        url: "{{ awx_url | default('http://10.0.100.159:8013') }}/api/v2/hosts/{{ item.id }}/groups/"
-        method: GET
-        user: "{{ lookup('env', 'AWX_USERNAME') }}"
-        password: "{{ lookup('env', 'AWX_PASSWORD') }}"
-        force_basic_auth: true
-        validate_certs: false
-        return_content: true
-      register: host_groups
-      loop: "{{ filtered_hosts }}"
-      loop_control:
-        label: "{{ item.name }}"
-
-    - name: "📊 Processar e exibir dados detalhados dos hosts"
+    - name: "📊 Processar dados essenciais para NetBox"
+      set_fact:
+        netbox_vms: "{{ netbox_vms | default([]) + [vm_data] }}"
       vars:
         host_detail: "{{ host_details.results[ansible_loop.index0].json }}"
-        host_group: "{{ host_groups.results[ansible_loop.index0].json }}"
-        host_vars: "{{ host_detail.variables | from_json }}"
-      debug:
-        msg: |
-          ============================================================
-          🖥️ Host: {{ host_detail.name }} (ID: {{ host_detail.id }})
-          📝 Descrição: {{ host_detail.description }}
-          🔛 Habilitado: {{ 'Sim' if host_detail.enabled else 'Não' }}
-          📡 IP Ansible: {{ host_vars.ansible_host | default('N/A') }}
+        # Parse seguro das variáveis
+        host_vars: "{{ (host_detail.variables | from_json) if (host_detail.variables and host_detail.variables != '') else {} }}"
+        # Dados essenciais para NetBox
+        vm_data:
+          # Identificação
+          name: "{{ host_detail.name }}"
+          description: "{{ host_detail.description | default('Importado do AWX') }}"
           
-          🖼️ Informações da VM:
-             Nome da VM: {{ host_vars.vm_name | default('N/A') }}
-             Sistema Operacional: {{ host_vars.vm_guest_os | default('N/A') }}
-             Estado: {{ host_vars.vm_power_state | default('N/A') }}
-             CPU: {{ host_vars.vm_cpu_count | default('N/A') }}
-             Memória: {{ host_vars.vm_memory_gb | default('N/A') }} GB
-             Datacenter: {{ host_vars.vm_datacenter | default('N/A') }}
-             Cluster: {{ host_vars.vm_cluster | default('N/A') }}
-             UUID: {{ host_vars.vm_uuid | default('N/A') }}
-             IPs: {{ host_vars.vm_ip_addresses | default([]) | join(', ') }}
+          # Status (mapear power_state para status NetBox)
+          status: "{{ 'active' if (host_vars.vm_power_state | default('')) == 'poweredOn' else 'offline' }}"
           
-          👥 Grupos: {{ host_group.results | map(attribute='name') | join(', ') }}
+          # Recursos de Hardware
+          vcpus: "{{ host_vars.vm_cpu_count | default(1) | int }}"
+          memory_mb: "{{ (host_vars.vm_memory_gb | default(1) | float * 1024) | int }}"
+          memory_gb: "{{ host_vars.vm_memory_gb | default(1) | float }}"
+          disk_mb: "{{ host_vars.vm_disk_gb | default(host_vars.vm_memory_gb | default(20)) | float * 1024 | int }}"
+          disk_gb: "{{ host_vars.vm_disk_gb | default(host_vars.vm_memory_gb | default(20)) | float }}"
           
-          🔧 Comando para detalhes via API:
-          curl -u 'USERNAME:****' 'AWX_URL/api/v2/hosts/{{ host_detail.id }}/' | jq '.'
+          # Rede
+          primary_ip4: "{{ host_vars.ansible_host | default('') }}"
+          ip_addresses: "{{ host_vars.vm_ip_addresses | default([host_vars.ansible_host]) if host_vars.ansible_host else [] }}"
+          
+          # Localização/Organização
+          cluster: "{{ host_vars.vm_cluster | default('Default Cluster') }}"
+          datacenter: "{{ host_vars.vm_datacenter | default('Default Site') }}"
+          
+          # Sistema
+          platform: "{{ host_vars.vm_guest_os | default('Unknown OS') }}"
+          
+          # Metadata AWX
+          awx_id: "{{ host_detail.id }}"
+          awx_enabled: "{{ host_detail.enabled }}"
+          awx_inventory: "{{ inventory_filter | default('VMware Inventory') }}"
       loop: "{{ filtered_hosts }}"
       loop_control:
         extended: true
         label: "{{ item.name }}"
-      when: show_details | default(true)
+      failed_when: false
 
-    - name: "📊 Resumo final"
+    - name: "📋 Exibir dados coletados (formato NetBox)"
       debug:
         msg: |
-          📊 Resumo Final:
+          ============================================================
+          🖥️ VM: {{ item.name }}
+          📊 Status: {{ item.status | upper }}
+          💻 Hardware:
+            - vCPUs: {{ item.vcpus }}
+            - Memória: {{ item.memory_gb }}GB ({{ item.memory_mb }}MB)
+            - Disco: {{ item.disk_gb }}GB ({{ item.disk_mb }}MB)
+          🌐 Rede:
+            - IP Primário: {{ item.primary_ip4 if item.primary_ip4 else 'N/A' }}
+            - Todos os IPs: {{ item.ip_addresses | join(', ') if item.ip_addresses else 'N/A' }}
+          🏢 Localização:
+            - Cluster: {{ item.cluster }}
+            - Datacenter: {{ item.datacenter }}
+          💽 Sistema: {{ item.platform }}
+          🔗 AWX ID: {{ item.awx_id }}
+      loop: "{{ netbox_vms }}"
+      when: show_details | default(true)
+
+    - name: "📊 Resumo final - Dados para NetBox"
+      debug:
+        msg: |
+          📊 Resumo Final - Dados Coletados para NetBox:
           ==========================================
-          📦 Inventários processados: {{ target_inventories | length }}
-          🖥️ Total de hosts encontrados: {{ all_hosts | length }}
-          🎯 Hosts após filtros: {{ filtered_hosts | length }}
-          📋 Modo de execução: {{ 'Apenas Listagem' if list_only | default(true) else 'Processamento Completo' }}
+          🖥️ Total de VMs processadas: {{ netbox_vms | length }}
           
-          ✅ Coleta concluída com sucesso!
+          📋 VMs por Status:
+          {% set active_vms = netbox_vms | selectattr('status', 'equalto', 'active') | list %}
+          {% set offline_vms = netbox_vms | selectattr('status', 'equalto', 'offline') | list %}
+          - Ativas: {{ active_vms | length }}
+          - Offline: {{ offline_vms | length }}
           
-          🔧 Comandos úteis:
-          # Listar todos os inventários
-          curl -u '{{ lookup('env', 'AWX_USERNAME') }}:****' '{{ awx_url | default('http://10.0.100.159:8013') }}/api/v2/inventories/' | jq '.results[] | {id, name}'
+          💻 Recursos Totais:
+          - vCPUs Total: {{ netbox_vms | sum(attribute='vcpus') }}
+          - Memória Total: {{ netbox_vms | sum(attribute='memory_gb') | round(1) }}GB
+          - Disco Total: {{ netbox_vms | sum(attribute='disk_gb') | round(1) }}GB
           
-          # Hosts de um inventário específico
-          curl -u '{{ lookup('env', 'AWX_USERNAME') }}:****' '{{ awx_url | default('http://10.0.100.159:8013') }}/api/v2/inventories/INVENTORY_ID/hosts/' | jq '.results[] | {id, name}'
+          🏢 Datacenters:
+          {% for dc in netbox_vms | map(attribute='datacenter') | unique %}
+          - {{ dc }}: {{ netbox_vms | selectattr('datacenter', 'equalto', dc) | list | length }} VMs
+          {% endfor %}
+          
+          ✅ Dados prontos para sincronização com NetBox!
+
+    - name: "💾 Dados estruturados para NetBox (JSON simulado)"
+      debug:
+        var: netbox_vms
+      when: show_json | default(false)
+
+    - name: "🎯 Próximos passos"
+      debug:
+        msg: |
+          🎯 Próximos Passos para NetBox:
+          
+          1. ✅ Coleta AWX concluída - {{ netbox_vms | length }} VMs
+          2. 🔄 Configurar NetBox API
+          3. 🗺️ Mapear Sites/Clusters no NetBox
+          4. 🧪 Testar sincronização em dry-run
+          5. 🚀 Executar sincronização real
+          
+          💡 Campos coletados (compatíveis com NetBox):
+          - Nome, Status, vCPUs, Memória, Disco
+          - IP Primário, Platform, Cluster, Site
+          - Metadados AWX para rastreamento
