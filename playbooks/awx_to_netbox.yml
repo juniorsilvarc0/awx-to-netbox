@@ -14,3 +14,8 @@
         AWX_PASSWORD: "{{ AWX_PASSWORD }}"
         NETBOX_API: "{{ NETBOX_API }}"
         NETBOX_TOKEN: "{{ NETBOX_TOKEN }}"
+
+    - name: Exibir saída do script
+      debug:
+        var: resultado_execucao.stdout_lines
+      when: resultado_execucao is defined
