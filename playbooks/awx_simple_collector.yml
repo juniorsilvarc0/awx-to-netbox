@@ -390,6 +390,7 @@
         - sync_to_netbox | default(false)
         - not (dry_run | default(true))
         - item.name in (existing_vm_names | default([]))
+        - existing_vms_map is defined
         - existing_vms_map[item.name] is defined
       failed_when: false
 
