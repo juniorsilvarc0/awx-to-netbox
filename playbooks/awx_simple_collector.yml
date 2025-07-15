@@ -116,20 +116,25 @@
       loop_control:
         label: "{{ item.name }}"
 
+    - name: "Parse host variables safely"
+      set_fact:
+        host_variables: "{{ host_variables | default({}) | combine({item.name: parsed_vars}) }}"
+      vars:
+        host_detail: "{{ host_details.results[my_idx].json }}"
+        raw_vars: "{{ host_detail.variables | default('{}') }}"
+        parsed_vars: "{{ raw_vars if raw_vars is mapping else {} }}"
+      loop: "{{ filtered_hosts }}"
+      loop_control:
+        index_var: my_idx
+        label: "{{ item.name }}"
+      failed_when: false
+
     - name: "Process VM data"
       set_fact:
         netbox_vms: "{{ netbox_vms | default([]) + [vm_data] }}"
       vars:
         host_detail: "{{ host_details.results[my_idx].json }}"
-        raw_vars: "{{ host_detail.variables | default('') }}"
-        host_vars: >-
-          {%- if raw_vars is string and raw_vars != '' and raw_vars != '{}' -%}
-            {{ raw_vars | from_json }}
-          {%- elif raw_vars is mapping -%}
-            {{ raw_vars }}
-          {%- else -%}
-            {}
-          {%- endif -%}
+        host_vars: "{{ host_variables[item.name] | default({}) }}"
         vm_data:
           name: "{{ host_detail.name }}"
           status: "{{ 'active' if (host_vars.vm_power_state | default('')) == 'poweredOn' else 'offline' }}"
