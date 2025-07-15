@@ -191,11 +191,13 @@
       register: existing_vms_check
       when: sync_to_netbox | default(false)
 
-    - name: "Create list of existing VM names"
+    - name: "Create list of existing VM names and map"
       set_fact:
         existing_vm_names: "{{ existing_vms_check.json.results | map(attribute='name') | list }}"
         existing_vm_names_clean: "{{ existing_vms_check.json.results | map(attribute='name') | map('regex_replace', '[^a-zA-Z0-9._-]', '_') | list }}"
         existing_vm_cluster_names: "{{ existing_vms_check.json.results | selectattr('cluster', 'defined') | selectattr('cluster.id', 'equalto', 1) | map(attribute='name') | list }}"
+        existing_vms_map: "{{ existing_vms_map | default({}) | combine({item.name: item}) }}"
+      loop: "{{ existing_vms_check.json.results }}"
       when: 
         - sync_to_netbox | default(false)
         - existing_vms_check is defined
@@ -207,6 +209,9 @@
           Found {{ existing_vm_names | length }} existing VMs in NetBox:
           {{ existing_vm_names[:10] | join(', ') }}{{ '...' if existing_vm_names | length > 10 else '' }}
           Found {{ existing_vm_cluster_names | length }} existing VMs in cluster 1
+          Looking for: ATIASP-EMAIL-DLP-GOVERN07
+          In existing_vm_names: {{ 'ATIASP-EMAIL-DLP-GOVERN07' in existing_vm_names }}
+          In existing_vm_cluster_names: {{ 'ATIASP-EMAIL-DLP-GOVERN07' in existing_vm_cluster_names }}
       when: 
         - sync_to_netbox | default(false)
         - existing_vms_check is defined
@@ -226,10 +231,12 @@
           - Total VMs from AWX: {{ netbox_vms | default([]) | length }}
           - Already exist in NetBox: {{ existing_vm_names | length if existing_vm_names is defined else 0 }}
           - Will create: {{ vms_to_create | length }}
+          - Will update: {{ vms_to_update | length }}
           - Will skip: {{ vms_to_skip | length }}
       vars:
         vms_to_create: "{{ (netbox_vms | default([])) | rejectattr('name', 'in', existing_vm_names | default([])) | rejectattr('name', 'in', existing_vm_names_clean | default([])) | rejectattr('name', 'in', existing_vm_cluster_names | default([])) | rejectattr('original_name', 'in', existing_vm_names | default([])) | list }}"
-        vms_to_skip: "{{ (netbox_vms | default([])) | selectattr('name', 'in', existing_vm_names | default([])) | list }}"
+        vms_to_update: "{{ (netbox_vms | default([])) | selectattr('name', 'in', existing_vm_names | default([])) | list }}"
+        vms_to_skip: []
       when: sync_to_netbox | default(false)
 
     - name: "Get existing sites from NetBox"
@@ -329,6 +336,36 @@
         - item.original_name not in (existing_vm_names | default([]))
       failed_when: false
 
+    - name: "Update existing VMs in NetBox"
+      uri:
+        url: "{{ lookup('env', 'NETBOX_API') }}/api/virtualization/virtual-machines/{{ existing_vms_map[item.name].id }}/"
+        method: PATCH
+        headers:
+          Authorization: "Token {{ lookup('env', 'NETBOX_TOKEN') }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          name: "{{ item.name }}"
+          status: "{{ item.status }}"
+          site: "{{ existing_sites_map[item.datacenter] | default(1) }}"
+          cluster: 1
+          vcpus: "{{ item.vcpus | int }}"
+          memory: "{{ item.memory_mb | int }}"
+          disk: "{{ (item.disk_gb | float * 1024) | int }}"
+          comments: "AWX Update {{ sync_timestamp }}{{ ' - Original: ' + item.original_name if item.original_name != item.name else '' }}"
+        validate_certs: false
+        status_code: [200]
+      register: vm_update_results
+      loop: "{{ netbox_vms | default([]) }}"
+      loop_control:
+        label: "{{ item.name }}"
+      when: 
+        - sync_to_netbox | default(false)
+        - not (dry_run | default(true))
+        - item.name in (existing_vm_names | default([]))
+        - existing_vms_map[item.name] is defined
+      failed_when: false
+
     # TODO: Implementar criação de interfaces e IPs
     # - Buscar interfaces existentes com paginação: ?page_size=10000
     # - Criar interfaces eth0 para VMs com IPs
@@ -341,13 +378,15 @@
           AWX VMs: {{ netbox_vms | default([]) | length }}
           Existing in NetBox: {{ existing_vm_names | length if existing_vm_names is defined else 0 }}
           Created: {{ vm_create_results.results | selectattr('status', 'defined') | selectattr('status', 'in', [200, 201]) | list | length if vm_create_results is defined and vm_create_results.results is defined else 0 }}
-          Errors: {{ vm_create_results.results | selectattr('status', 'defined') | rejectattr('status', 'in', [200, 201]) | list | length if vm_create_results is defined and vm_create_results.results is defined else 0 }}
+          Updated: {{ vm_update_results.results | selectattr('status', 'defined') | selectattr('status', 'in', [200]) | list | length if vm_update_results is defined and vm_update_results.results is defined else 0 }}
+          Create Errors: {{ vm_create_results.results | selectattr('status', 'defined') | rejectattr('status', 'in', [200, 201]) | list | length if vm_create_results is defined and vm_create_results.results is defined else 0 }}
+          Update Errors: {{ vm_update_results.results | selectattr('status', 'defined') | rejectattr('status', 'in', [200]) | list | length if vm_update_results is defined and vm_update_results.results is defined else 0 }}
       when: sync_to_netbox | default(false)
 
-    - name: "Show first 5 errors for debugging"
+    - name: "Show first 5 CREATE errors for debugging"
       debug:
         msg: |
-          Error Details:
+          CREATE Error Details:
           VM: {{ item.item.name }}
           Status: {{ item.status | default('No status') }}
           Error: {{ item.msg | default('No error message') }}
@@ -358,3 +397,18 @@
         - sync_to_netbox | default(false)
         - vm_create_results is defined 
         - vm_create_results.results is defined
+
+    - name: "Show first 5 UPDATE errors for debugging"
+      debug:
+        msg: |
+          UPDATE Error Details:
+          VM: {{ item.item.name }}
+          Status: {{ item.status | default('No status') }}
+          Error: {{ item.msg | default('No error message') }}
+      loop: "{{ (vm_update_results.results | selectattr('status', 'defined') | rejectattr('status', 'in', [200]) | list)[:5] }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+      when: 
+        - sync_to_netbox | default(false)
+        - vm_update_results is defined 
+        - vm_update_results.results is defined
