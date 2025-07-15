@@ -306,7 +306,7 @@
         - not (dry_run | default(true))
         - item.primary_ip4 is defined
         - item.primary_ip4 != ""
-        - item.primary_ip4 != null
+        - item.primary_ip4 != None
         - vm_create_results is defined
         - vm_create_results.results is defined
       failed_when: false
@@ -334,7 +334,7 @@
         - not (dry_run | default(true))
         - item.primary_ip4 is defined
         - item.primary_ip4 != ""
-        - item.primary_ip4 != null
+        - item.primary_ip4 != None
         - vm_create_results is defined
         - vm_create_results.results is defined
         - ip_create_results is defined
