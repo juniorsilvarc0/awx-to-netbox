@@ -84,6 +84,22 @@
         filtered_hosts: "{{ all_hosts }}"
       when: host_filter is not defined or host_filter == ""
 
+    - name: "🎯 Limitar a 10 VMs para teste"
+      set_fact:
+        filtered_hosts: "{{ filtered_hosts[:10] }}"
+
+    - name: "📊 Exibir resumo dos hosts (limitado)"
+      debug:
+        msg: |
+          🖥️ Resumo dos hosts:
+          - Total encontrado: {{ all_hosts | length }}
+          - Após filtros: {{ filtered_hosts | length }} (limitado a 10 para teste)
+          
+          📋 Hosts selecionados:
+          {% for host in filtered_hosts %}
+          - {{ host.name }} (ID: {{ host.id }}) {{ '🟢' if host.enabled else '🔴' }}
+          {% endfor %}
+
     - name: "🔍 Buscar detalhes completos dos hosts"
       uri:
         url: "{{ awx_url | default('http://10.0.100.159:8013') }}/api/v2/hosts/{{ item.id }}/"
@@ -103,39 +119,45 @@
         netbox_vms: "{{ netbox_vms | default([]) + [vm_data] }}"
       vars:
         host_detail: "{{ host_details.results[ansible_loop.index0].json }}"
-        # Parse seguro das variáveis
-        host_vars: "{{ (host_detail.variables | from_json) if (host_detail.variables and host_detail.variables != '') else {} }}"
-        # Dados essenciais para NetBox
+        # Parse mais seguro das variáveis com verificação
+        raw_vars: "{{ host_detail.variables | default('{}') }}"
+        host_vars: "{{ (raw_vars | from_json) if (raw_vars and raw_vars != '' and raw_vars != '{}') else {} }}"
+        
+        # Dados essenciais para NetBox com tratamento seguro
         vm_data:
           # Identificação
           name: "{{ host_detail.name }}"
           description: "{{ host_detail.description | default('Importado do AWX') }}"
           
-          # Status (mapear power_state para status NetBox)
-          status: "{{ 'active' if (host_vars.vm_power_state | default('')) == 'poweredOn' else 'offline' }}"
+          # Status - verificação mais segura
+          power_state: "{{ host_vars.get('vm_power_state', 'unknown') }}"
+          status: "{{ 'active' if host_vars.get('vm_power_state', '') == 'poweredOn' else 'offline' }}"
           
-          # Recursos de Hardware
-          vcpus: "{{ host_vars.vm_cpu_count | default(1) | int }}"
-          memory_mb: "{{ (host_vars.vm_memory_gb | default(1) | float * 1024) | int }}"
-          memory_gb: "{{ host_vars.vm_memory_gb | default(1) | float }}"
-          disk_mb: "{{ host_vars.vm_disk_gb | default(host_vars.vm_memory_gb | default(20)) | float * 1024 | int }}"
-          disk_gb: "{{ host_vars.vm_disk_gb | default(host_vars.vm_memory_gb | default(20)) | float }}"
+          # Recursos de Hardware - valores seguros
+          vcpus: "{{ host_vars.get('vm_cpu_count', 1) | int }}"
+          memory_gb: "{{ host_vars.get('vm_memory_gb', 1) | float }}"
+          memory_mb: "{{ (host_vars.get('vm_memory_gb', 1) | float * 1024) | int }}"
           
-          # Rede
-          primary_ip4: "{{ host_vars.ansible_host | default('') }}"
-          ip_addresses: "{{ host_vars.vm_ip_addresses | default([host_vars.ansible_host]) if host_vars.ansible_host else [] }}"
+          # Rede - verificação segura de IPs
+          ansible_host: "{{ host_vars.get('ansible_host', '') }}"
+          primary_ip4: "{{ host_vars.get('ansible_host', '') }}"
+          vm_ip_addresses: "{{ host_vars.get('vm_ip_addresses', []) }}"
           
           # Localização/Organização
-          cluster: "{{ host_vars.vm_cluster | default('Default Cluster') }}"
-          datacenter: "{{ host_vars.vm_datacenter | default('Default Site') }}"
+          cluster: "{{ host_vars.get('vm_cluster', 'Default Cluster') }}"
+          datacenter: "{{ host_vars.get('vm_datacenter', 'Default Site') }}"
           
           # Sistema
-          platform: "{{ host_vars.vm_guest_os | default('Unknown OS') }}"
+          platform: "{{ host_vars.get('vm_guest_os', 'Unknown OS') }}"
           
           # Metadata AWX
           awx_id: "{{ host_detail.id }}"
           awx_enabled: "{{ host_detail.enabled }}"
           awx_inventory: "{{ inventory_filter | default('VMware Inventory') }}"
+          
+          # Debug - mostrar variáveis brutas
+          raw_variables: "{{ raw_vars }}"
+          has_variables: "{{ true if (raw_vars and raw_vars != '' and raw_vars != '{}') else false }}"
       loop: "{{ filtered_hosts }}"
       loop_control:
         extended: true
@@ -148,27 +170,37 @@
           ============================================================
           🖥️ VM: {{ item.name }}
           📊 Status: {{ item.status | upper }}
+          
+          {% if item.has_variables %}
           💻 Hardware:
             - vCPUs: {{ item.vcpus }}
             - Memória: {{ item.memory_gb }}GB ({{ item.memory_mb }}MB)
-            - Disco: {{ item.disk_gb }}GB ({{ item.disk_mb }}MB)
+          
           🌐 Rede:
             - IP Primário: {{ item.primary_ip4 if item.primary_ip4 else 'N/A' }}
-            - Todos os IPs: {{ item.ip_addresses | join(', ') if item.ip_addresses else 'N/A' }}
+            - Todos os IPs: {{ item.vm_ip_addresses | join(', ') if item.vm_ip_addresses else 'N/A' }}
+          
           🏢 Localização:
             - Cluster: {{ item.cluster }}
             - Datacenter: {{ item.datacenter }}
+          
           💽 Sistema: {{ item.platform }}
+          {% else %}
+          ⚠️ Variáveis da VM não disponíveis
+          📝 Dados brutos: {{ item.raw_variables }}
+          {% endif %}
+          
           🔗 AWX ID: {{ item.awx_id }}
       loop: "{{ netbox_vms }}"
       when: show_details | default(true)
 
-    - name: "📊 Resumo final - Dados para NetBox"
+    - name: "📊 Resumo final - Dados para NetBox (10 VMs)"
       debug:
         msg: |
           📊 Resumo Final - Dados Coletados para NetBox:
           ==========================================
-          🖥️ Total de VMs processadas: {{ netbox_vms | length }}
+          🖥️ VMs processadas: {{ netbox_vms | length }} de {{ all_hosts | length }} total
+          📝 Limitado a 10 VMs para teste
           
           📋 VMs por Status:
           {% set active_vms = netbox_vms | selectattr('status', 'equalto', 'active') | list %}
@@ -176,10 +208,9 @@
           - Ativas: {{ active_vms | length }}
           - Offline: {{ offline_vms | length }}
           
-          💻 Recursos Totais:
+          💻 Recursos (10 VMs):
           - vCPUs Total: {{ netbox_vms | sum(attribute='vcpus') }}
           - Memória Total: {{ netbox_vms | sum(attribute='memory_gb') | round(1) }}GB
-          - Disco Total: {{ netbox_vms | sum(attribute='disk_gb') | round(1) }}GB
           
           🏢 Datacenters:
           {% for dc in netbox_vms | map(attribute='datacenter') | unique %}
@@ -198,13 +229,17 @@
         msg: |
           🎯 Próximos Passos para NetBox:
           
-          1. ✅ Coleta AWX concluída - {{ netbox_vms | length }} VMs
+          1. ✅ Coleta AWX concluída - {{ netbox_vms | length }} VMs (limitado a 10)
           2. 🔄 Configurar NetBox API
           3. 🗺️ Mapear Sites/Clusters no NetBox
           4. 🧪 Testar sincronização em dry-run
           5. 🚀 Executar sincronização real
           
           💡 Campos coletados (compatíveis com NetBox):
-          - Nome, Status, vCPUs, Memória, Disco
+          - Nome, Status, vCPUs, Memória
           - IP Primário, Platform, Cluster, Site
           - Metadados AWX para rastreamento
+          
+          ⚠️ Para processar todas as {{ all_hosts | length }} VMs:
+          - Remover limite de 10 VMs do playbook
+          - Aumentar timeout do Job Template
