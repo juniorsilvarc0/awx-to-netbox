@@ -254,3 +254,234 @@
           ⚠️ Para processar todas as {{ all_hosts | length }} VMs:
           - Remover limite de 10 VMs do playbook
           - Aumentar timeout do Job Template
+
+    # ============================================
+    # SEÇÃO NETBOX - SINCRONIZAÇÃO
+    # ============================================
+
+    - name: "🔐 Validar credentials NetBox"
+      debug:
+        msg: |
+          🔐 Validação de Credentials NetBox:
+          🔗 NetBox URL: {{ lookup('env', 'NETBOX_API') | default('NÃO DEFINIDO') }}
+          🔑 NetBox Token: {{ 'DEFINIDO ✅' if lookup('env', 'NETBOX_TOKEN') else 'NÃO DEFINIDO ❌' }}
+      when: sync_to_netbox | default(false)
+
+    - name: "🔍 Testar conectividade com NetBox"
+      uri:
+        url: "{{ lookup('env', 'NETBOX_API') }}/api/"
+        method: GET
+        headers:
+          Authorization: "Token {{ lookup('env', 'NETBOX_TOKEN') }}"
+        validate_certs: false
+        return_content: true
+      register: netbox_connectivity
+      failed_when: false
+      when: sync_to_netbox | default(false)
+
+    - name: "✅ Conectividade NetBox"
+      debug:
+        msg: |
+          {% if netbox_connectivity.status == 200 %}
+          ✅ NetBox conectado com sucesso!
+          📊 Versão NetBox: {{ netbox_connectivity.json.version | default('Desconhecida') }}
+          {% else %}
+          ❌ Falha na conectividade NetBox!
+          🔍 Status: {{ netbox_connectivity.status | default('N/A') }}
+          📝 Erro: {{ netbox_connectivity.msg | default('Conexão falhou') }}
+          {% endif %}
+      when: sync_to_netbox | default(false)
+
+    - name: "❌ Falhar se não conseguir conectar ao NetBox"
+      fail:
+        msg: "Não foi possível conectar ao NetBox. Verifique URL e token."
+      when: 
+        - sync_to_netbox | default(false)
+        - netbox_connectivity.status != 200
+
+    - name: "🏢 Verificar/Criar Site padrão no NetBox"
+      uri:
+        url: "{{ lookup('env', 'NETBOX_API') }}/api/dcim/sites/"
+        method: GET
+        headers:
+          Authorization: "Token {{ lookup('env', 'NETBOX_TOKEN') }}"
+        validate_certs: false
+        return_content: true
+      register: netbox_sites
+      when: sync_to_netbox | default(false)
+
+    - name: "🏢 Criar Site ATI-SLC-HCI se não existir"
+      uri:
+        url: "{{ lookup('env', 'NETBOX_API') }}/api/dcim/sites/"
+        method: POST
+        headers:
+          Authorization: "Token {{ lookup('env', 'NETBOX_TOKEN') }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          name: "ATI-SLC-HCI"
+          slug: "ati-slc-hci"
+          description: "Datacenter principal - Importado do AWX"
+        validate_certs: false
+        status_code: [200, 201, 400]  # 400 se já existir
+      register: site_creation
+      when: 
+        - sync_to_netbox | default(false)
+        - netbox_sites.json.results | selectattr('name', 'equalto', 'ATI-SLC-HCI') | list | length == 0
+
+    - name: "📊 Obter ID do Site ATI-SLC-HCI"
+      set_fact:
+        ati_site_id: "{{ (netbox_sites.json.results | selectattr('name', 'equalto', 'ATI-SLC-HCI') | first).id }}"
+      when: 
+        - sync_to_netbox | default(false)
+        - netbox_sites.json.results | selectattr('name', 'equalto', 'ATI-SLC-HCI') | list | length > 0
+
+    - name: "📊 Usar ID do Site criado"
+      set_fact:
+        ati_site_id: "{{ site_creation.json.id }}"
+      when: 
+        - sync_to_netbox | default(false)
+        - site_creation is defined
+        - site_creation.status == 201
+
+    - name: "🏭 Verificar/Criar Cluster no NetBox"
+      uri:
+        url: "{{ lookup('env', 'NETBOX_API') }}/api/virtualization/clusters/"
+        method: GET
+        headers:
+          Authorization: "Token {{ lookup('env', 'NETBOX_TOKEN') }}"
+        validate_certs: false
+        return_content: true
+      register: netbox_clusters
+      when: sync_to_netbox | default(false)
+
+    - name: "🏭 Criar Cluster vSAN se não existir"
+      uri:
+        url: "{{ lookup('env', 'NETBOX_API') }}/api/virtualization/clusters/"
+        method: POST
+        headers:
+          Authorization: "Token {{ lookup('env', 'NETBOX_TOKEN') }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          name: "Cluster vSAN"
+          type: 1  # Assumindo tipo VMware (ajustar se necessário)
+          site: "{{ ati_site_id }}"
+          description: "Cluster VMware vSAN - Importado do AWX"
+        validate_certs: false
+        status_code: [200, 201, 400]  # 400 se já existir
+      register: cluster_creation
+      when: 
+        - sync_to_netbox | default(false)
+        - ati_site_id is defined
+        - netbox_clusters.json.results | selectattr('name', 'equalto', 'Cluster vSAN') | list | length == 0
+
+    - name: "📊 Obter ID do Cluster vSAN"
+      set_fact:
+        vsan_cluster_id: "{{ (netbox_clusters.json.results | selectattr('name', 'equalto', 'Cluster vSAN') | first).id }}"
+      when: 
+        - sync_to_netbox | default(false)
+        - netbox_clusters.json.results | selectattr('name', 'equalto', 'Cluster vSAN') | list | length > 0
+
+    - name: "📊 Usar ID do Cluster criado"
+      set_fact:
+        vsan_cluster_id: "{{ cluster_creation.json.id }}"
+      when: 
+        - sync_to_netbox | default(false)
+        - cluster_creation is defined
+        - cluster_creation.status == 201
+
+    - name: "🖥️ Sincronizar VMs com NetBox"
+      uri:
+        url: "{{ lookup('env', 'NETBOX_API') }}/api/virtualization/virtual-machines/"
+        method: POST
+        headers:
+          Authorization: "Token {{ lookup('env', 'NETBOX_TOKEN') }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          name: "{{ item.name }}"
+          status: "{{ item.status }}"
+          site: "{{ ati_site_id | default(1) }}"
+          cluster: "{{ vsan_cluster_id | default(1) }}"
+          vcpus: "{{ item.vcpus | int }}"
+          memory: "{{ item.memory_mb | int }}"
+          comments: |
+            Importado do AWX
+            AWX ID: {{ item.awx_id }}
+            Inventário: {{ item.awx_inventory }}
+            Platform: {{ item.platform }}
+            Cluster Original: {{ item.cluster }}
+            Datacenter Original: {{ item.datacenter }}
+          custom_fields:
+            awx_id: "{{ item.awx_id }}"
+            awx_inventory: "{{ item.awx_inventory }}"
+            vm_power_state: "{{ item.power_state }}"
+        validate_certs: false
+        status_code: [200, 201, 400]  # 400 se já existir
+      register: vm_sync_results
+      loop: "{{ netbox_vms }}"
+      loop_control:
+        label: "{{ item.name }}"
+      when: 
+        - sync_to_netbox | default(false)
+        - not (dry_run | default(true))
+      failed_when: false
+
+    - name: "🧪 Simulação de sincronização (DRY-RUN)"
+      debug:
+        msg: |
+          🧪 DRY-RUN: Simulando criação da VM {{ item.name }} no NetBox
+          
+          📊 Dados que seriam enviados:
+          - Nome: {{ item.name }}
+          - Status: {{ item.status }}
+          - Site: {{ ati_site_id | default('1 (padrão)') }}
+          - Cluster: {{ vsan_cluster_id | default('1 (padrão)') }}
+          - vCPUs: {{ item.vcpus }}
+          - Memória: {{ item.memory_mb }}MB
+          - IP Primário: {{ item.primary_ip4 }}
+          - Platform: {{ item.platform }}
+          
+          🔗 URL de criação: {{ lookup('env', 'NETBOX_API') }}/api/virtualization/virtual-machines/
+      loop: "{{ netbox_vms }}"
+      loop_control:
+        label: "{{ item.name }}"
+      when: 
+        - sync_to_netbox | default(false)
+        - dry_run | default(true)
+
+    - name: "📊 Resumo da sincronização NetBox"
+      debug:
+        msg: |
+          📊 Resumo da Sincronização NetBox:
+          ==========================================
+          {% if dry_run | default(true) %}
+          🧪 Modo: DRY-RUN (Simulação)
+          {% else %}
+          🚀 Modo: EXECUÇÃO REAL
+          {% endif %}
+          
+          🖥️ VMs processadas: {{ netbox_vms | length }}
+          
+          {% if not (dry_run | default(true)) and vm_sync_results is defined %}
+          📈 Resultados da sincronização:
+          {% set success_count = vm_sync_results.results | selectattr('status', 'in', [200, 201]) | list | length %}
+          {% set error_count = vm_sync_results.results | selectattr('status', 'equalto', 400) | list | length %}
+          - ✅ Criadas/Atualizadas: {{ success_count }}
+          - ⚠️ Já existentes: {{ error_count }}
+          - ❌ Erros: {{ (vm_sync_results.results | length) - success_count - error_count }}
+          {% endif %}
+          
+          🏢 Infraestrutura NetBox:
+          - Site: ATI-SLC-HCI (ID: {{ ati_site_id | default('Será criado') }})
+          - Cluster: Cluster vSAN (ID: {{ vsan_cluster_id | default('Será criado') }})
+          
+          {% if dry_run | default(true) %}
+          💡 Para executar sincronização real:
+          - Definir: sync_to_netbox=true
+          - Definir: dry_run=false
+          {% else %}
+          ✅ Sincronização real executada!
+          {% endif %}
+      when: sync_to_netbox | default(false)
