@@ -88,6 +88,10 @@
         filtered_hosts: "{{ all_hosts }}"
       when: host_filter is not defined or host_filter == ""
 
+    - name: "🎯 Limitar a 10 VMs para teste"
+      set_fact:
+        filtered_hosts: "{{ filtered_hosts[:10] }}"
+
     - name: "🔍 Buscar detalhes completos dos hosts"
       uri:
         url: "{{ awx_url | default('http://10.0.100.159:8013') }}/api/v2/hosts/{{ item.id }}/"
@@ -642,7 +646,7 @@
           
           🚀 Projeto completo e funcional!
           
-          📈 Próximos passos:
-          - ✅ Processando todas as {{ (all_hosts | default([])) | length }} VMs
+          📈 Para escalar:
+          - Remover limite de 10 VMs
+          - Processar todas as {{ (all_hosts | default([])) | length }} VMs
           - Configurar execução agendada
-          - Implementar logs detalhados
