@@ -196,6 +196,6 @@
         msg: |
           AWX VMs: {{ netbox_vms | length }}
           Existing in NetBox: {{ existing_vm_names | length if existing_vm_names is defined else 0 }}
-          Created: {{ vm_create_results.results | selectattr('status', 'in', [200, 201]) | list | length if vm_create_results is defined else 0 }}
-          Errors: {{ vm_create_results.results | selectattr('status', 'not in', [200, 201]) | list | length if vm_create_results is defined else 0 }}
+          Created: {{ vm_create_results.results | selectattr('status', 'defined') | selectattr('status', 'in', [200, 201]) | list | length if vm_create_results is defined and vm_create_results.results is defined else 0 }}
+          Errors: {{ vm_create_results.results | selectattr('status', 'defined') | rejectattr('status', 'in', [200, 201]) | list | length if vm_create_results is defined and vm_create_results.results is defined else 0 }}
       when: sync_to_netbox | default(false)
