@@ -142,9 +142,9 @@
           status: "{{ 'active' if (host_vars.vm_power_state | default('')) == 'poweredOn' else 'offline' }}"
           
           # Recursos de Hardware
-          vcpus: "{{ host_vars.vm_cpu_count | default(1) | int }}"
-          memory_gb: "{{ host_vars.vm_memory_gb | default(1) | float }}"
-          memory_mb: "{{ (host_vars.vm_memory_gb | default(1) | float * 1024) | int }}"
+          vcpus: "{{ (host_vars.vm_cpu_count | default(1) | int) }}"
+          memory_gb: "{{ (host_vars.vm_memory_gb | default(1) | float) }}"
+          memory_mb: "{{ ((host_vars.vm_memory_gb | default(1) | float) * 1024) | int }}"
           
           # Rede
           ansible_host: "{{ host_vars.ansible_host | default('') }}"
@@ -218,8 +218,10 @@
           - Offline: {{ offline_vms | length }}
           
           💻 Recursos (10 VMs):
-          - vCPUs Total: {{ netbox_vms | sum(attribute='vcpus') }}
-          - Memória Total: {{ netbox_vms | sum(attribute='memory_gb') | round(1) }}GB
+          {% set total_vcpus = netbox_vms | map(attribute='vcpus') | map('int') | sum %}
+          {% set total_memory = netbox_vms | map(attribute='memory_gb') | map('float') | sum %}
+          - vCPUs Total: {{ total_vcpus }}
+          - Memória Total: {{ total_memory | round(1) }}GB
           
           🏢 Datacenters:
           {% for dc in netbox_vms | map(attribute='datacenter') | unique %}
