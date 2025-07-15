@@ -417,7 +417,29 @@
         - sync_to_netbox | default(false)
         - vsan_cluster_id is not defined
 
-    - name: "🖥️ Sincronizar VMs com NetBox"
+    - name: "🔍 Verificar VMs existentes no NetBox antes da sincronização"
+      uri:
+        url: "{{ lookup('env', 'NETBOX_API') }}/api/virtualization/virtual-machines/"
+        method: GET
+        headers:
+          Authorization: "Token {{ lookup('env', 'NETBOX_TOKEN') }}"
+        validate_certs: false
+        return_content: true
+      register: existing_vms_check
+      when: sync_to_netbox | default(false)
+
+    - name: "📊 Mapear VMs existentes por nome"
+      set_fact:
+        existing_vms_map: >-
+          {{
+            existing_vms_check.json.results | 
+            items2dict(key_name='name', value_name='id') if existing_vms_check.json.results else {}
+          }}
+      when: 
+        - sync_to_netbox | default(false)
+        - existing_vms_check is defined
+
+    - name: "🖥️ Criar VMs novas no NetBox"
       uri:
         url: "{{ lookup('env', 'NETBOX_API') }}/api/virtualization/virtual-machines/"
         method: POST
@@ -439,31 +461,68 @@
             Platform: {{ item.platform }}
             Cluster Original: {{ item.cluster }}
             Datacenter Original: {{ item.datacenter }}
+            Última Sincronização: {{ ansible_date_time.iso8601 }}
         validate_certs: false
-        status_code: [200, 201, 400]  # 400 se já existir
-      register: vm_sync_results
+        status_code: [200, 201]
+      register: vm_create_results
       loop: "{{ netbox_vms }}"
       loop_control:
         label: "{{ item.name }}"
       when: 
         - sync_to_netbox | default(false)
         - not (dry_run | default(true))
+        - item.name not in (existing_vms_map.keys() | list)
       failed_when: false
 
-    - name: "🐛 Debug VM Sync Results"
-      debug:
-        msg: |
-          🐛 Resultado da sincronização para {{ item.item.name }}:
-          📊 Status HTTP: {{ item.status | default('N/A') }}
-          📝 Resposta: {{ item.json | default(item.msg | default('Sem resposta')) }}
-          🔗 URL: {{ item.url | default('N/A') }}
-      loop: "{{ vm_sync_results.results }}"
+    - name: "🔄 Atualizar VMs existentes no NetBox"
+      uri:
+        url: "{{ lookup('env', 'NETBOX_API') }}/api/virtualization/virtual-machines/{{ existing_vms_map[item.name] }}/"
+        method: PATCH
+        headers:
+          Authorization: "Token {{ lookup('env', 'NETBOX_TOKEN') }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          status: "{{ item.status }}"
+          vcpus: "{{ item.vcpus | int }}"
+          memory: "{{ item.memory_mb | int }}"
+          comments: |
+            Importado do AWX
+            AWX ID: {{ item.awx_id }}
+            Inventário: {{ item.awx_inventory }}
+            Platform: {{ item.platform }}
+            Cluster Original: {{ item.cluster }}
+            Datacenter Original: {{ item.datacenter }}
+            Última Sincronização: {{ ansible_date_time.iso8601 }}
+        validate_certs: false
+        status_code: [200]
+      register: vm_update_results
+      loop: "{{ netbox_vms }}"
       loop_control:
-        label: "{{ item.item.name }}"
+        label: "{{ item.name }}"
       when: 
         - sync_to_netbox | default(false)
         - not (dry_run | default(true))
-        - vm_sync_results is defined
+        - item.name in (existing_vms_map.keys() | list)
+      failed_when: false
+
+    - name: "🐛 Debug Operações de VMs"
+      debug:
+        msg: |
+          🐛 Operação para {{ item.item.name }}:
+          📊 Ação: {{ 'CRIAR' if item.item.name not in existing_vms_map.keys() else 'ATUALIZAR' }}
+          📊 Status HTTP: {{ item.status | default('N/A') }}
+          {% if item.status not in [200, 201] %}
+          📝 Erro: {{ item.json | default(item.msg | default('Sem detalhes')) }}
+          {% else %}
+          ✅ Sucesso
+          {% endif %}
+      loop: "{{ (vm_create_results.results | default([])) + (vm_update_results.results | default([])) }}"
+      loop_control:
+        label: "{{ item.item.name if item.item is defined else 'N/A' }}"
+      when: 
+        - sync_to_netbox | default(false)
+        - not (dry_run | default(true))
 
     - name: "🔍 Verificar VMs existentes no NetBox"
       uri:
@@ -476,14 +535,22 @@
       register: existing_vms
       when: sync_to_netbox | default(false)
 
-    - name: "📋 Mostrar VMs existentes no NetBox"
+    - name: "📋 Mostrar VMs no NetBox após sincronização"
       debug:
         msg: |
-          📋 VMs existentes no NetBox:
+          📋 VMs no NetBox após sincronização:
           Total: {{ existing_vms.json.count | default(0) }}
+          
           {% if existing_vms.json.results %}
+          📊 Resumo por Status:
+          {% set active_vms = existing_vms.json.results | selectattr('status.value', 'equalto', 'active') | list %}
+          {% set offline_vms = existing_vms.json.results | selectattr('status.value', 'equalto', 'offline') | list %}
+          - ✅ Ativas: {{ active_vms | length }}
+          - 🔴 Offline: {{ offline_vms | length }}
+          
+          📋 Lista das VMs:
           {% for vm in existing_vms.json.results %}
-          - {{ vm.name }} (ID: {{ vm.id }}, Status: {{ vm.status.label }})
+          - {{ vm.name }} ({{ vm.status.label }}) - {{ vm.vcpus }} vCPUs, {{ vm.memory }}MB
           {% endfor %}
           {% else %}
           (Nenhuma VM encontrada)
@@ -528,25 +595,31 @@
           
           🖥️ VMs processadas: {{ netbox_vms | length }}
           
-          {% if not (dry_run | default(true)) and vm_sync_results is defined %}
+          {% if not (dry_run | default(true)) %}
           📈 Resultados da sincronização:
-          {% set success_results = vm_sync_results.results | selectattr('status', 'in', [200, 201]) | list %}
-          {% set exists_results = vm_sync_results.results | selectattr('status', 'equalto', 400) | list %}
-          {% set all_results = vm_sync_results.results | list %}
-          {% set error_results = [] %}
-          {% for result in all_results %}
-          {% if result.status not in [200, 201, 400] %}
-          {% set _ = error_results.append(result) %}
-          {% endif %}
-          {% endfor %}
-          - ✅ Criadas/Atualizadas: {{ success_results | length }}
-          - ⚠️ Erros 400 (possível duplicata): {{ exists_results | length }}
-          - ❌ Outros erros: {{ error_results | length }}
+          {% set create_results = vm_create_results.results | default([]) %}
+          {% set update_results = vm_update_results.results | default([]) %}
+          {% set created_success = create_results | selectattr('status', 'in', [200, 201]) | list %}
+          {% set updated_success = update_results | selectattr('status', 'equalto', 200) | list %}
+          {% set create_errors = create_results | selectattr('status', 'not in', [200, 201]) | list %}
+          {% set update_errors = update_results | selectattr('status', 'not in', [200]) | list %}
           
-          {% if exists_results | length > 0 %}
-          🔍 Detalhes dos erros 400:
-          {% for result in exists_results %}
-          - {{ result.item.name }}: {{ result.json.name[0] | default('Erro desconhecido') if result.json.name is defined else 'Sem detalhes' }}
+          🆕 Operações de CRIAÇÃO:
+          - ✅ VMs criadas: {{ created_success | length }}
+          - ❌ Erros na criação: {{ create_errors | length }}
+          
+          🔄 Operações de ATUALIZAÇÃO:
+          - ✅ VMs atualizadas: {{ updated_success | length }}
+          - ❌ Erros na atualização: {{ update_errors | length }}
+          
+          📊 Total:
+          - ✅ Sucessos: {{ (created_success | length) + (updated_success | length) }}
+          - ❌ Erros: {{ (create_errors | length) + (update_errors | length) }}
+          
+          {% if (create_errors | length) > 0 or (update_errors | length) > 0 %}
+          🔍 Detalhes dos erros:
+          {% for error in create_errors + update_errors %}
+          - {{ error.item.name }}: {{ error.json | default(error.msg) | default('Erro desconhecido') }}
           {% endfor %}
           {% endif %}
           
