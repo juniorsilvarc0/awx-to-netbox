@@ -10,6 +10,11 @@
         echo "📋 Conteúdo do diretório:"
         ls -la
         echo ""
+        echo "📂 Subindo para o diretório projeto:"
+        cd ..
+        echo "📂 Diretório projeto: $(pwd)"
+        ls -la
+        echo ""
         echo "🔍 Verificando se script existe:"
         ls -la scripts/awx-netbox.py || echo "❌ Script não encontrado!"
         echo ""
@@ -32,6 +37,7 @@
     - name: Executar script Python
       ansible.builtin.shell: |
         echo "🚀 Executando script Python..."
+        cd ..
         python3 scripts/awx-netbox.py
       args:
         chdir: "{{ ansible_env.ANSIBLE_PROJECT_DIR | default('.') }}"
