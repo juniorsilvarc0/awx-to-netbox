@@ -1,9 +1,13 @@
 ---
 - name: "🚀 AWX Simple Collector - Dados Essenciais para NetBox"
   hosts: localhost
-  gather_facts: false
+  gather_facts: true  # Mudança: habilitar para ter ansible_date_time
   
   tasks:
+    - name: "⏰ Obter timestamp atual"
+      set_fact:
+        sync_timestamp: "{{ lookup('pipe', 'date +%Y-%m-%d_%H:%M:%S') }}"
+
     - name: "🔐 Validar credentials AWX"
       debug:
         msg: |
@@ -430,14 +434,19 @@
 
     - name: "📊 Mapear VMs existentes por nome"
       set_fact:
-        existing_vms_map: >-
-          {{
-            existing_vms_check.json.results | 
-            items2dict(key_name='name', value_name='id') if existing_vms_check.json.results else {}
-          }}
+        existing_vms_map: {}
+      when: sync_to_netbox | default(false)
+
+    - name: "📊 Construir mapa de VMs existentes"
+      set_fact:
+        existing_vms_map: "{{ existing_vms_map | combine({item.name: item.id}) }}"
+      loop: "{{ existing_vms_check.json.results | default([]) }}"
+      loop_control:
+        label: "{{ item.name }}"
       when: 
         - sync_to_netbox | default(false)
         - existing_vms_check is defined
+        - existing_vms_check.json.results is defined
 
     - name: "🖥️ Criar VMs novas no NetBox"
       uri:
@@ -461,7 +470,7 @@
             Platform: {{ item.platform }}
             Cluster Original: {{ item.cluster }}
             Datacenter Original: {{ item.datacenter }}
-            Última Sincronização: {{ ansible_date_time.iso8601 }}
+            Última Sincronização: {{ sync_timestamp }}
         validate_certs: false
         status_code: [200, 201]
       register: vm_create_results
@@ -493,7 +502,7 @@
             Platform: {{ item.platform }}
             Cluster Original: {{ item.cluster }}
             Datacenter Original: {{ item.datacenter }}
-            Última Sincronização: {{ ansible_date_time.iso8601 }}
+            Última Sincronização: {{ sync_timestamp }}
         validate_certs: false
         status_code: [200]
       register: vm_update_results
