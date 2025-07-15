@@ -35,6 +35,7 @@
       set_fact:
         target_inventories: >-
           {{
+            awx_inventories.json.results if not inventory_filter or inventory_filter == 'all' else
             awx_inventories.json.results | 
             selectattr('name', 'in', (inventory_filter | default('VMware Inventory')).split(',') | map('trim')) | 
             list
@@ -76,7 +77,12 @@
 
     - name: "Show VMs found"
       debug:
-        msg: "Found {{ filtered_hosts | length }} VMs total from {{ all_hosts | length }} hosts"
+        msg: |
+          Debug Info:
+          - Inventories found: {{ target_inventories | length }}
+          - Total hosts from AWX: {{ all_hosts | length }}
+          - After filtering: {{ filtered_hosts | length }}
+          - Inventory names: {{ target_inventories | map(attribute='name') | list }}
 
     - name: "Get host details"
       uri:
@@ -139,7 +145,7 @@
 
     - name: "Get existing VMs from NetBox"
       uri:
-        url: "{{ lookup('env', 'NETBOX_API') }}/api/virtualization/virtual-machines/"
+        url: "{{ lookup('env', 'NETBOX_API') }}/api/virtualization/virtual-machines/?page_size=10000"
         method: GET
         headers:
           Authorization: "Token {{ lookup('env', 'NETBOX_TOKEN') }}"
@@ -210,3 +216,19 @@
           Created: {{ vm_create_results.results | selectattr('status', 'defined') | selectattr('status', 'in', [200, 201]) | list | length if vm_create_results is defined and vm_create_results.results is defined else 0 }}
           Errors: {{ vm_create_results.results | selectattr('status', 'defined') | rejectattr('status', 'in', [200, 201]) | list | length if vm_create_results is defined and vm_create_results.results is defined else 0 }}
       when: sync_to_netbox | default(false)
+
+    - name: "Show first 5 errors for debugging"
+      debug:
+        msg: |
+          Error Details:
+          VM: {{ item.item.name }}
+          Status: {{ item.status | default('No status') }}
+          Error: {{ item.msg | default('No error message') }}
+      loop: "{{ vm_create_results.results | selectattr('status', 'defined') | rejectattr('status', 'in', [200, 201]) | list }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+      when: 
+        - sync_to_netbox | default(false)
+        - vm_create_results is defined 
+        - vm_create_results.results is defined
+        - ansible_loop.index0 < 5
