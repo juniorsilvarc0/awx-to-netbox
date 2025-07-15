@@ -439,10 +439,6 @@
             Platform: {{ item.platform }}
             Cluster Original: {{ item.cluster }}
             Datacenter Original: {{ item.datacenter }}
-          custom_fields:
-            awx_id: "{{ item.awx_id }}"
-            awx_inventory: "{{ item.awx_inventory }}"
-            vm_power_state: "{{ item.power_state }}"
         validate_certs: false
         status_code: [200, 201, 400]  # 400 se já existir
       register: vm_sync_results
@@ -453,6 +449,48 @@
         - sync_to_netbox | default(false)
         - not (dry_run | default(true))
       failed_when: false
+
+    - name: "🐛 Debug VM Sync Results"
+      debug:
+        msg: |
+          🐛 Resultado da sincronização para {{ item.item.name }}:
+          📊 Status HTTP: {{ item.status | default('N/A') }}
+          📝 Resposta: {{ item.json | default(item.msg | default('Sem resposta')) }}
+          🔗 URL: {{ item.url | default('N/A') }}
+      loop: "{{ vm_sync_results.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+      when: 
+        - sync_to_netbox | default(false)
+        - not (dry_run | default(true))
+        - vm_sync_results is defined
+
+    - name: "🔍 Verificar VMs existentes no NetBox"
+      uri:
+        url: "{{ lookup('env', 'NETBOX_API') }}/api/virtualization/virtual-machines/"
+        method: GET
+        headers:
+          Authorization: "Token {{ lookup('env', 'NETBOX_TOKEN') }}"
+        validate_certs: false
+        return_content: true
+      register: existing_vms
+      when: sync_to_netbox | default(false)
+
+    - name: "📋 Mostrar VMs existentes no NetBox"
+      debug:
+        msg: |
+          📋 VMs existentes no NetBox:
+          Total: {{ existing_vms.json.count | default(0) }}
+          {% if existing_vms.json.results %}
+          {% for vm in existing_vms.json.results %}
+          - {{ vm.name }} (ID: {{ vm.id }}, Status: {{ vm.status.label }})
+          {% endfor %}
+          {% else %}
+          (Nenhuma VM encontrada)
+          {% endif %}
+      when: 
+        - sync_to_netbox | default(false)
+        - existing_vms is defined
 
     - name: "🧪 Simulação de sincronização (DRY-RUN)"
       debug:
@@ -492,16 +530,27 @@
           
           {% if not (dry_run | default(true)) and vm_sync_results is defined %}
           📈 Resultados da sincronização:
-          {% set success_count = vm_sync_results.results | selectattr('status', 'in', [200, 201]) | list | length %}
-          {% set error_count = vm_sync_results.results | selectattr('status', 'equalto', 400) | list | length %}
-          - ✅ Criadas/Atualizadas: {{ success_count }}
-          - ⚠️ Já existentes: {{ error_count }}
-          - ❌ Erros: {{ (vm_sync_results.results | length) - success_count - error_count }}
+          {% set success_results = vm_sync_results.results | selectattr('status', 'in', [200, 201]) | list %}
+          {% set exists_results = vm_sync_results.results | selectattr('status', 'equalto', 400) | list %}
+          {% set error_results = vm_sync_results.results | selectattr('status', 'not in', [200, 201, 400]) | list %}
+          - ✅ Criadas/Atualizadas: {{ success_results | length }}
+          - ⚠️ Erros 400 (possível duplicata): {{ exists_results | length }}
+          - ❌ Outros erros: {{ error_results | length }}
+          
+          {% if exists_results | length > 0 %}
+          🔍 Detalhes dos erros 400:
+          {% for result in exists_results %}
+          - {{ result.item.name }}: {{ result.json.name[0] | default('Erro desconhecido') if result.json.name is defined else 'Sem detalhes' }}
+          {% endfor %}
+          {% endif %}
+          
           {% endif %}
           
           🏢 Infraestrutura NetBox:
-          - Site: ATI-SLC-HCI (ID: {{ ati_site_id | default('Será criado') }})
-          - Cluster: Cluster vSAN (ID: {{ vsan_cluster_id | default('Será criado') }})
+          - Site: ATI-SLC-HCI (ID: {{ ati_site_id | default('Não definido') }})
+          - Cluster: Cluster vSAN (ID: {{ vsan_cluster_id | default('Não definido') }})
+          
+          📊 VMs no NetBox: {{ existing_vms.json.count | default('Verificação não executada') }}
           
           {% if dry_run | default(true) %}
           💡 Para executar sincronização real:
