@@ -173,35 +173,33 @@
         label: "{{ item.name }}"
 
     - name: "📊 Processar e exibir dados detalhados dos hosts"
+      vars:
+        host_detail: "{{ host_details.results[ansible_loop.index0].json }}"
+        host_group: "{{ host_groups.results[ansible_loop.index0].json }}"
+        host_vars: "{{ host_detail.variables | from_json }}"
       debug:
         msg: |
           ============================================================
           🖥️ Host: {{ host_detail.name }} (ID: {{ host_detail.id }})
           📝 Descrição: {{ host_detail.description }}
           🔛 Habilitado: {{ 'Sim' if host_detail.enabled else 'Não' }}
-          📡 IP Ansible: {{ (host_detail.variables | from_json).ansible_host | default('N/A') }}
+          📡 IP Ansible: {{ host_vars.ansible_host | default('N/A') }}
           
           🖼️ Informações da VM:
-             Nome da VM: {{ (host_detail.variables | from_json).vm_name | default('N/A') }}
-             Sistema Operacional: {{ (host_detail.variables | from_json).vm_guest_os | default('N/A') }}
-             Estado: {{ (host_detail.variables | from_json).vm_power_state | default('N/A') }}
-             CPU: {{ (host_detail.variables | from_json).vm_cpu_count | default('N/A') }}
-             Memória: {{ (host_detail.variables | from_json).vm_memory_gb | default('N/A') }} GB
-             Datacenter: {{ (host_detail.variables | from_json).vm_datacenter | default('N/A') }}
-             Cluster: {{ (host_detail.variables | from_json).vm_cluster | default('N/A') }}
-             UUID: {{ (host_detail.variables | from_json).vm_uuid | default('N/A') }}
-             {% set ip_addresses = (host_detail.variables | from_json).vm_ip_addresses | default([]) %}
-             {% if ip_addresses %}
-             IPs: {{ ip_addresses | join(', ') }}
-             {% endif %}
+             Nome da VM: {{ host_vars.vm_name | default('N/A') }}
+             Sistema Operacional: {{ host_vars.vm_guest_os | default('N/A') }}
+             Estado: {{ host_vars.vm_power_state | default('N/A') }}
+             CPU: {{ host_vars.vm_cpu_count | default('N/A') }}
+             Memória: {{ host_vars.vm_memory_gb | default('N/A') }} GB
+             Datacenter: {{ host_vars.vm_datacenter | default('N/A') }}
+             Cluster: {{ host_vars.vm_cluster | default('N/A') }}
+             UUID: {{ host_vars.vm_uuid | default('N/A') }}
+             IPs: {{ host_vars.vm_ip_addresses | default([]) | join(', ') }}
           
           👥 Grupos: {{ host_group.results | map(attribute='name') | join(', ') }}
           
           🔧 Comando para detalhes via API:
-          curl -u '{{ lookup('env', 'AWX_USERNAME') }}:****' '{{ awx_url | default('http://10.0.100.159:8013') }}/api/v2/hosts/{{ host_detail.id }}/' | jq '.'
-      vars:
-        host_detail: "{{ host_details.results[ansible_loop.index0].json }}"
-        host_group: "{{ host_groups.results[ansible_loop.index0].json }}"
+          curl -u 'USERNAME:****' 'AWX_URL/api/v2/hosts/{{ host_detail.id }}/' | jq '.'
       loop: "{{ filtered_hosts }}"
       loop_control:
         extended: true
