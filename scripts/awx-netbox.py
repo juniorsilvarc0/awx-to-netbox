@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
+import traceback
 import requests
 import json
 import os
@@ -192,6 +192,6 @@ def main():
 
         except Exception as e:
             print(f"❌ Erro ao processar VM {vm.get('vm_name')}: {e}")
-
+            traceback.print_exc()
 if __name__ == "__main__":
     main()

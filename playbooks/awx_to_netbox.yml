@@ -3,38 +3,14 @@
   hosts: localhost
   gather_facts: false
 
-  vars:
-    script_local_path: "{{ playbook_dir }}/../scripts/awx-netbox.py"
-    remote_dir: "/tmp/sync-awx-netbox"
-    script_remote_path: "{{ remote_dir }}/awx-netbox.py"
-
   tasks:
-
-    - name: Criar diretório remoto temporário
-      file:
-        path: "{{ remote_dir }}"
-        state: directory
-        mode: '0755'
-
-    - name: Copiar script awx-netbox.py para o destino
-      copy:
-        src: "{{ script_local_path }}"
-        dest: "{{ script_remote_path }}"
-        mode: '0755'
-
-    - name: Executar script com variáveis de ambiente injetadas via credenciais do AWX
+    - name: Executar script Python diretamente do repositório
+      ansible.builtin.command: >
+        python3 scripts/awx-netbox.py
+      args:
+        chdir: "{{ ansible_env.ANSIBLE_PROJECT_DIR | default('.') }}"
       environment:
-        AWX_URL: "{{ lookup('env', 'AWX_URL') | default('http://localhost:80', true) }}"
-        AWX_USER: "{{ lookup('env', 'AWX_USERNAME') }}"
-        AWX_PASSWORD: "{{ lookup('env', 'AWX_PASSWORD') }}"
-        NETBOX_URL: "{{ lookup('env', 'NETBOX_API') }}"
-        NETBOX_TOKEN: "{{ lookup('env', 'NETBOX_TOKEN') }}"
-      command: "python3 {{ script_remote_path }}"
-      register: resultado_execucao
-      ignore_errors: true
-
-    - name: Exibir saída do script
-      debug:
-        var: resultado_execucao.stdout_lines
-
-
+        AWX_USERNAME: "{{ AWX_USERNAME }}"
+        AWX_PASSWORD: "{{ AWX_PASSWORD }}"
+        NETBOX_API: "{{ NETBOX_API }}"
+        NETBOX_TOKEN: "{{ NETBOX_TOKEN }}"
