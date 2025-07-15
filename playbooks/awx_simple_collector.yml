@@ -191,11 +191,18 @@
       register: existing_vms_check
       when: sync_to_netbox | default(false)
 
-    - name: "Create list of existing VM names and map"
+    - name: "Create list of existing VM names"
       set_fact:
         existing_vm_names: "{{ existing_vms_check.json.results | map(attribute='name') | list }}"
         existing_vm_names_clean: "{{ existing_vms_check.json.results | map(attribute='name') | map('regex_replace', '[^a-zA-Z0-9._-]', '_') | list }}"
         existing_vm_cluster_names: "{{ existing_vms_check.json.results | selectattr('cluster', 'defined') | selectattr('cluster.id', 'equalto', 1) | map(attribute='name') | list }}"
+      when: 
+        - sync_to_netbox | default(false)
+        - existing_vms_check is defined
+        - existing_vms_check.json.results is defined
+
+    - name: "Create existing VMs map"
+      set_fact:
         existing_vms_map: "{{ existing_vms_map | default({}) | combine({item.name: item}) }}"
       loop: "{{ existing_vms_check.json.results }}"
       when: 
