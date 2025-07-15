@@ -363,6 +363,41 @@
         - item.json is defined
         - item.json.results is defined
 
+    - name: "🔌 Criar interfaces nas VMs para IPs"
+      uri:
+        url: "{{ lookup('env', 'NETBOX_API') }}/api/virtualization/interfaces/"
+        method: POST
+        headers:
+          Authorization: "Token {{ lookup('env', 'NETBOX_TOKEN') }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          virtual_machine: "{{ vm_netbox_id }}"
+          name: "eth0"
+          type: "virtual"
+          enabled: true
+          description: "Interface principal - Criada automaticamente do AWX"
+        validate_certs: false
+        status_code: [200, 201]
+      register: interface_create_results
+      loop: "{{ netbox_vms | default([]) }}"
+      loop_control:
+        label: "{{ item.name }} - Interface eth0"
+        loop_var: item
+      vars:
+        # Busca ID da VM: primeiro tenta VMs criadas, depois VMs existentes
+        vm_created_id: "{{ (vm_create_results.results | default([]) | selectattr('item.name', 'equalto', item.name) | map(attribute='json.id') | first) | default('') }}"
+        vm_existing_id: "{{ (existing_vms_data | default([]) | selectattr('name', 'equalto', item.name) | map(attribute='id') | first) | default('') }}"
+        vm_netbox_id: "{{ vm_created_id if vm_created_id != '' else vm_existing_id }}"
+      when: 
+        - sync_to_netbox | default(false)
+        - not (dry_run | default(true))
+        - item.primary_ip4 is defined
+        - item.primary_ip4 != ""
+        - item.primary_ip4 != None
+        - vm_netbox_id != ""
+      failed_when: false
+
     - name: "🌐 Criar endereços IP no NetBox para VMs com IPs definidos"
       uri:
         url: "{{ lookup('env', 'NETBOX_API') }}/api/ipam/ip-addresses/"
@@ -373,8 +408,8 @@
         body_format: json
         body:
           address: "{{ ip_item }}/24"
-          assigned_object_type: "virtualization.virtualmachine"
-          assigned_object_id: "{{ vm_netbox_id }}"
+          assigned_object_type: "virtualization.vminterface"
+          assigned_object_id: "{{ interface_id }}"
           status: "active"
           dns_name: "{{ item.name | lower }}"
           description: "IP da VM {{ item.name }} - Importado do AWX {{ sync_timestamp }}"
@@ -391,6 +426,8 @@
         vm_created_id: "{{ (vm_create_results.results | default([]) | selectattr('item.name', 'equalto', item.name) | map(attribute='json.id') | first) | default('') }}"
         vm_existing_id: "{{ (existing_vms_data | default([]) | selectattr('name', 'equalto', item.name) | map(attribute='id') | first) | default('') }}"
         vm_netbox_id: "{{ vm_created_id if vm_created_id != '' else vm_existing_id }}"
+        # Busca ID da interface criada
+        interface_id: "{{ (interface_create_results.results | default([]) | selectattr('item.name', 'equalto', item.name) | map(attribute='json.id') | first) | default('') }}"
       when: 
         - sync_to_netbox | default(false)
         - not (dry_run | default(true))
@@ -398,6 +435,7 @@
         - item.primary_ip4 != ""
         - item.primary_ip4 != None
         - vm_netbox_id != ""
+        - interface_id != ""
         - (ip_item + "/24") not in (existing_ips | default([]))
       failed_when: false
 
@@ -465,6 +503,12 @@
           
           {% set vms_with_ips = (netbox_vms | default([])) | selectattr('primary_ip4', 'defined') | selectattr('primary_ip4', 'ne', '') | list %}
           🌐 VMs com IPs: {{ vms_with_ips | length }}
+          
+          {% if interface_create_results is defined and interface_create_results.results is defined %}
+          {% set interface_results = interface_create_results.results | default([]) %}
+          🔌 Interfaces criadas: {{ interface_results | selectattr('status', 'defined') | selectattr('status', 'in', [200, 201]) | list | length }}
+          ❌ Erros interfaces: {{ interface_results | selectattr('status', 'defined') | rejectattr('status', 'in', [200, 201]) | list | length }}
+          {% endif %}
           
           {% if ip_create_results is defined and ip_create_results.results is defined %}
           {% set ip_results = ip_create_results.results | default([]) %}
