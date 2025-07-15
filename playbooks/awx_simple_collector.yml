@@ -335,6 +335,34 @@
         - vm_id != ""
       failed_when: false
 
+    - name: "🔍 Verificar IPs existentes no NetBox"
+      uri:
+        url: "{{ lookup('env', 'NETBOX_API') }}/api/ipam/ip-addresses/?address={{ item.primary_ip4 }}"
+        method: GET
+        headers:
+          Authorization: "Token {{ lookup('env', 'NETBOX_TOKEN') }}"
+        validate_certs: false
+        return_content: true
+      register: existing_ips_check
+      loop: "{{ netbox_vms | default([]) }}"
+      loop_control:
+        label: "{{ item.name }} - {{ item.primary_ip4 if item.primary_ip4 else 'Sem IP' }}"
+      when: 
+        - sync_to_netbox | default(false)
+        - item.primary_ip4 is defined
+        - item.primary_ip4 != ""
+        - item.primary_ip4 != None
+      failed_when: false
+
+    - name: "📋 Consolidar lista de IPs existentes"
+      set_fact:
+        existing_ips: "{{ existing_ips | default([]) + (item.json.results | map(attribute='address') | list) }}"
+      loop: "{{ existing_ips_check.results | default([]) }}"
+      when: 
+        - sync_to_netbox | default(false)
+        - item.json is defined
+        - item.json.results is defined
+
     - name: "🌐 Criar endereços IP no NetBox para VMs com IPs definidos"
       uri:
         url: "{{ lookup('env', 'NETBOX_API') }}/api/ipam/ip-addresses/"
@@ -370,6 +398,7 @@
         - item.primary_ip4 != ""
         - item.primary_ip4 != None
         - vm_netbox_id != ""
+        - (ip_item + "/24") not in (existing_ips | default([]))
       failed_when: false
 
     - name: "🔗 Atualizar VM com IP primário no NetBox"
@@ -381,7 +410,7 @@
           Content-Type: "application/json"
         body_format: json
         body:
-          primary_ip4: "{{ ip_create_results.results | selectattr('item.name', 'equalto', item.name) | map(attribute='json.id') | first | default('') }}"
+          primary_ip4: "{{ ip_id if ip_id != '' else null }}"
         validate_certs: false
         status_code: [200, 201]
       register: vm_update_results
@@ -393,6 +422,7 @@
         vm_created_id: "{{ (vm_create_results.results | default([]) | selectattr('item.name', 'equalto', item.name) | map(attribute='json.id') | first) | default('') }}"
         vm_existing_id: "{{ (existing_vms_data | default([]) | selectattr('name', 'equalto', item.name) | map(attribute='id') | first) | default('') }}"
         vm_id: "{{ vm_created_id if vm_created_id != '' else vm_existing_id }}"
+        ip_id: "{{ (ip_create_results.results | default([]) | selectattr('item.name', 'equalto', item.name) | map(attribute='json.id') | first) | default('') }}"
       when: 
         - sync_to_netbox | default(false)
         - not (dry_run | default(true))
@@ -451,6 +481,39 @@
           💡 Estratégia: CRIAR + ATUALIZAR
           ✅ VMs e IPs sempre sincronizados!
       when: sync_to_netbox | default(false)
+
+    - name: "🐛 Debug - Erros de Atualização de VMs"
+      debug:
+        msg: |
+          🐛 Erro VM Update - {{ item.item.name }}:
+          Status: {{ item.status | default('N/A') }}
+          Erro: {{ item.msg | default('N/A') }}
+          URL: {{ item.url | default('N/A') }}
+      loop: "{{ vm_update_results.results | default([]) }}"
+      when: 
+        - sync_to_netbox | default(false)
+        - vm_update_results is defined
+        - vm_update_results.results is defined
+        - item.status is defined
+        - item.status not in [200, 201]
+      failed_when: false
+
+    - name: "🐛 Debug - Erros de Criação de IPs"
+      debug:
+        msg: |
+          🐛 Erro IP Create - {{ item.item.name }}:
+          Status: {{ item.status | default('N/A') }}
+          Erro: {{ item.msg | default('N/A') }}
+          URL: {{ item.url | default('N/A') }}
+          IP: {{ item.item.primary_ip4 | default('N/A') }}
+      loop: "{{ ip_create_results.results | default([]) }}"
+      when: 
+        - sync_to_netbox | default(false)
+        - ip_create_results is defined
+        - ip_create_results.results is defined
+        - item.status is defined
+        - item.status not in [200, 201]
+      failed_when: false
 
     - name: "🎯 Próximos passos"
       debug:
