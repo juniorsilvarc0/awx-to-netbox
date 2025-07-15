@@ -125,7 +125,17 @@ class SimpleAWXCollector:
                 data = r.json()
                 page_results = data.get("results", [])
                 results.extend(page_results)
-                url = data.get("next")
+                
+                # Processar URL da próxima página
+                next_url = data.get("next")
+                if next_url:
+                    # Se a URL é relativa, adicionar o base URL
+                    if next_url.startswith('/'):
+                        next_url = f"{AWX_URL}{next_url}"
+                    url = next_url
+                else:
+                    url = None
+                    
                 print(f"   └─ Página {page}: {len(page_results)} itens, total: {len(results)}")
                 page += 1
             except requests.exceptions.RequestException as e:
