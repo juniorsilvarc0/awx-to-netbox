@@ -9,6 +9,7 @@
   # sync_to_netbox: true/false (padrão: false)
   # dry_run: true/false (padrão: true)
   # show_details: true/false (padrão: true)
+  # update_mode: "create_only" (padrão) ou "create_and_update" (futuro)
 
   tasks:
     - name: "Get timestamp"
@@ -136,12 +137,14 @@
         host_detail: "{{ host_details.results[my_idx].json }}"
         host_vars: "{{ host_variables[item.name] | default({}) }}"
         vm_data:
-          name: "{{ host_detail.name }}"
+          name: "{{ host_detail.name | regex_replace('[^a-zA-Z0-9._-]', '_') }}"
+          original_name: "{{ host_detail.name }}"
           status: "{{ 'active' if (host_vars.vm_power_state | default('')) == 'poweredOn' else 'offline' }}"
           vcpus: "{{ (host_vars.vm_cpu_count | default(1) | int) }}"
           memory_mb: "{{ ((host_vars.vm_memory_gb | default(1) | float) * 1024) | int }}"
           disk_gb: "{{ (host_vars.vm_disk_total_gb | default(20) | float) }}"
           primary_ip4: "{{ host_vars.ansible_host | default('') }}"
+          datacenter: "{{ host_vars.vm_datacenter | default('ATI-SLC-HCI') }}"
           awx_id: "{{ host_detail.id }}"
       loop: "{{ filtered_hosts }}"
       loop_control:
@@ -180,6 +183,13 @@
     - name: "Create list of existing VM names"
       set_fact:
         existing_vm_names: "{{ existing_vms_check.json.results | map(attribute='name') | list }}"
+        existing_vm_names_clean: "{{ existing_vms_check.json.results | map(attribute='name') | map('regex_replace', '[^a-zA-Z0-9._-]', '_') | list }}"
+      
+    - name: "Debug existing VMs"
+      debug:
+        msg: |
+          Found {{ existing_vm_names | length }} existing VMs in NetBox:
+          {{ existing_vm_names[:10] | join(', ') }}{{ '...' if existing_vm_names | length > 10 else '' }}
       when: 
         - sync_to_netbox | default(false)
         - existing_vms_check is defined
@@ -198,9 +208,77 @@
           Sync Plan:
           - Total VMs from AWX: {{ netbox_vms | default([]) | length }}
           - Already exist in NetBox: {{ existing_vm_names | length if existing_vm_names is defined else 0 }}
-          - Will create: {{ (netbox_vms | default([])) | rejectattr('name', 'in', existing_vm_names | default([])) | list | length }}
-          - Will skip: {{ (netbox_vms | default([])) | selectattr('name', 'in', existing_vm_names | default([])) | list | length }}
+          - Will create: {{ vms_to_create | length }}
+          - Will skip: {{ vms_to_skip | length }}
+      vars:
+        vms_to_create: "{{ (netbox_vms | default([])) | rejectattr('name', 'in', existing_vm_names | default([])) | rejectattr('name', 'in', existing_vm_names_clean | default([])) | list }}"
+        vms_to_skip: "{{ (netbox_vms | default([])) | selectattr('name', 'in', existing_vm_names | default([])) | list }}"
       when: sync_to_netbox | default(false)
+
+    - name: "Get existing sites from NetBox"
+      uri:
+        url: "{{ lookup('env', 'NETBOX_API') }}/api/dcim/sites/?page_size=10000"
+        method: GET
+        headers:
+          Authorization: "Token {{ lookup('env', 'NETBOX_TOKEN') }}"
+        validate_certs: false
+        return_content: true
+      register: existing_sites_check
+      when: sync_to_netbox | default(false)
+      failed_when: false
+
+    - name: "Create sites map"
+      set_fact:
+        existing_sites_map: "{{ existing_sites_map | default({}) | combine({item.name: item.id}) }}"
+      loop: "{{ existing_sites_check.json.results | default([]) }}"
+      when: 
+        - sync_to_netbox | default(false)
+        - existing_sites_check.json is defined
+        - existing_sites_check.json.results is defined
+
+    - name: "Create missing sites"
+      uri:
+        url: "{{ lookup('env', 'NETBOX_API') }}/api/dcim/sites/"
+        method: POST
+        headers:
+          Authorization: "Token {{ lookup('env', 'NETBOX_TOKEN') }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          name: "{{ datacenter_item }}"
+          slug: "{{ datacenter_item | lower | regex_replace('[^a-z0-9-]', '-') }}"
+          description: "Site created from AWX - {{ sync_timestamp }}"
+        validate_certs: false
+        status_code: [200, 201]
+      register: site_create_results
+      loop: "{{ (netbox_vms | default([]) | map(attribute='datacenter') | unique | list) }}"
+      loop_control:
+        label: "{{ datacenter_item }}"
+        loop_var: datacenter_item
+      when: 
+        - sync_to_netbox | default(false)
+        - not (dry_run | default(true))
+        - datacenter_item not in (existing_sites_map.keys() | list)
+      failed_when: false
+
+    - name: "Update sites map with new ones"
+      set_fact:
+        existing_sites_map: "{{ existing_sites_map | default({}) | combine({item.datacenter_item: item.json.id}) }}"
+      loop: "{{ site_create_results.results | default([]) }}"
+      when: 
+        - sync_to_netbox | default(false)
+        - item.json is defined
+        - item.json.id is defined
+        - item.status in [200, 201]
+
+    - name: "Show sites mapping"
+      debug:
+        msg: |
+          Sites mapping:
+          {{ existing_sites_map | default({}) | to_nice_json }}
+      when: 
+        - sync_to_netbox | default(false)
+        - existing_sites_map is defined
 
     - name: "Create new VMs in NetBox"
       uri:
@@ -213,12 +291,12 @@
         body:
           name: "{{ item.name }}"
           status: "{{ item.status }}"
-          site: 1
+          site: "{{ existing_sites_map[item.datacenter] | default(1) }}"
           cluster: 1
           vcpus: "{{ item.vcpus | int }}"
           memory: "{{ item.memory_mb | int }}"
           disk: "{{ (item.disk_gb | float * 1024) | int }}"
-          comments: "AWX Import {{ sync_timestamp }}"
+          comments: "AWX Import {{ sync_timestamp }}{{ ' - Original: ' + item.original_name if item.original_name != item.name else '' }}"
         validate_certs: false
         status_code: [200, 201]
       register: vm_create_results
@@ -228,9 +306,16 @@
       when: 
         - sync_to_netbox | default(false)
         - not (dry_run | default(true))
-        - item.name not in existing_vm_names
+        - item.name not in (existing_vm_names | default([]))
+        - item.name not in (existing_vm_names_clean | default([]))
       failed_when: false
 
+    # TODO: Implementar criação de interfaces e IPs
+    # - Buscar interfaces existentes com paginação: ?page_size=10000
+    # - Criar interfaces eth0 para VMs com IPs
+    # - Criar endereços IP e associar às interfaces
+    # - Definir IP primário da VM
+    
     - name: "Show sync results"
       debug:
         msg: |
