@@ -38,7 +38,7 @@
       ansible.builtin.shell: |
         echo "🚀 Executando script Python..."
         cd ..
-        python3 scripts/awx-netbox.py
+        python3 -u scripts/awx-netbox.py
       args:
         chdir: "{{ ansible_env.ANSIBLE_PROJECT_DIR | default('.') }}"
       register: script_result

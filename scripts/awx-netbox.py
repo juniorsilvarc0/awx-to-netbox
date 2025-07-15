@@ -54,6 +54,13 @@ HEADERS = {
     "Accept": "application/json"
 }
 
+# Cache para reduzir chamadas à API
+_cache = {
+    "sites": {},
+    "clusters": {},
+    "existing_vms": None
+}
+
 # === CLASSE PARA COLETA DO AWX ===
 class SimpleAWXCollector:
     def __init__(self):
@@ -164,6 +171,22 @@ def paginated_get_all(endpoint, query=""):
     return results
 
 def get_id_by_name(endpoint, name):
+    # Usar cache para sites e clusters
+    if endpoint == "dcim/sites":
+        if name not in _cache["sites"]:
+            entries = paginated_get_all(endpoint, f"&name={name}")
+            for item in entries:
+                _cache["sites"][item["name"]] = item["id"]
+        return _cache["sites"].get(name)
+    
+    elif endpoint == "virtualization/clusters":
+        if name not in _cache["clusters"]:
+            entries = paginated_get_all(endpoint, f"&name={name}")
+            for item in entries:
+                _cache["clusters"][item["name"]] = item["id"]
+        return _cache["clusters"].get(name)
+    
+    # Fallback para outros endpoints
     entries = paginated_get_all(endpoint, f"&name={name}")
     for item in entries:
         if item["name"] == name:
@@ -187,18 +210,21 @@ def ensure_vm(vm):
         "comments": f"Atualizado via AWX em {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
     }
 
-    existing = paginated_get_all("virtualization/virtual-machines", f"&name={name}")
-    if existing:
-        vm_id = existing[0]["id"]
+    # Usar cache de VMs existentes
+    existing_vm = _cache["existing_vms"].get(name)
+    if existing_vm:
+        vm_id = existing_vm["id"]
         requests.patch(f"{NETBOX_URL}/api/virtualization/virtual-machines/{vm_id}/", headers=HEADERS, data=json.dumps(payload), verify=False)
-        print(f"♻️ VM atualizada: {name}")
+        print_flush(f"♻️ VM atualizada: {name}")
     else:
         r = requests.post(f"{NETBOX_URL}/api/virtualization/virtual-machines/", headers=HEADERS, data=json.dumps(payload), verify=False)
         if r.status_code in [200, 201]:
             vm_id = r.json()["id"]
-            print(f"✅ VM criada: {name}")
+            # Adicionar ao cache
+            _cache["existing_vms"][name] = {"id": vm_id, "name": name}
+            print_flush(f"✅ VM criada: {name}")
         else:
-            print(f"❌ Falha ao criar VM {name}: {r.text}")
+            print_flush(f"❌ Falha ao criar VM {name}: {r.text}")
             return None
 
     return vm_id
@@ -245,32 +271,34 @@ def main():
     collector = SimpleAWXCollector()
     vms = collector.list_hosts()
 
-    print_flush(f"🔄 Processando {len(vms)} VMs...")
+    # Pré-carregar cache de VMs existentes
+    print_flush("📋 Carregando VMs existentes do NetBox...")
+    _cache["existing_vms"] = {vm["name"]: vm for vm in paginated_get_all("virtualization/virtual-machines")}
+    print_flush(f"   └─ Encontradas {len(_cache['existing_vms'])} VMs no NetBox")
+
+    print_flush(f"🔄 Processando {len(vms)} VMs (somente VMs, sem interfaces/IPs)...")
+    success_count = 0
+    error_count = 0
+    
     for i, vm in enumerate(vms, 1):
         try:
             if not vm.get("vm_name"):
                 continue
 
-            print_flush(f"📝 ({i}/{len(vms)}) Processando VM: {vm.get('vm_name')}")
+            # Mostrar progresso a cada 5 VMs
+            if i % 5 == 0 or i == len(vms):
+                print_flush(f"📝 Progresso: {i}/{len(vms)} VMs ({success_count} ok, {error_count} erros)")
             
             vm_id = ensure_vm(vm)
-            if not vm_id:
-                continue
-
-            iface_id = ensure_interface(vm_id, "eth0")
-            if not iface_id:
-                continue
-
-            ip_list = vm.get("vm_ip_addresses", [])
-            if ip_list:
-                ip_id = ensure_ip(ip_list[0], iface_id)
-                if ip_id:
-                    update_primary_ip(vm_id, ip_id)
+            if vm_id:
+                success_count += 1
+            else:
+                error_count += 1
 
         except Exception as e:
+            error_count += 1
             print_flush(f"❌ Erro ao processar VM {vm.get('vm_name')}: {e}")
-            traceback.print_exc()
             
-    print_flush("🎉 Sincronização concluída!")
+    print_flush(f"🎉 Sincronização concluída! ✅ {success_count} VMs processadas, ❌ {error_count} erros")
 if __name__ == "__main__":
     main()
