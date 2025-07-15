@@ -292,7 +292,7 @@
           📋 VMs existentes no NetBox: {{ existing_vm_names | length if existing_vm_names is defined else 0 }}
           🆕 VMs para criar: {{ (netbox_vms | rejectattr('name', 'in', existing_vm_names) | list | length) if existing_vm_names is defined else netbox_vms | length }}
           
-          {% if not (dry_run | default(true)) and vm_create_results is defined %}
+          {% if not (dry_run | default(true)) and vm_create_results is defined and vm_create_results.results is defined %}
           ✅ VMs criadas: {{ vm_create_results.results | selectattr('status', 'in', [200, 201]) | list | length }}
           ❌ Erros: {{ vm_create_results.results | rejectattr('status', 'in', [200, 201]) | list | length }}
           {% endif %}
