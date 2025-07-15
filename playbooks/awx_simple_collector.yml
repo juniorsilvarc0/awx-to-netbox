@@ -212,14 +212,19 @@
           Looking for: ATIASP-EMAIL-DLP-GOVERN07
           In existing_vm_names: {{ 'ATIASP-EMAIL-DLP-GOVERN07' in existing_vm_names }}
           In existing_vm_cluster_names: {{ 'ATIASP-EMAIL-DLP-GOVERN07' in existing_vm_cluster_names }}
+          In existing_vms_map: {{ existing_vms_map['ATIASP-EMAIL-DLP-GOVERN07'] is defined }}
+          All existing names: {{ existing_vm_names | join(', ') }}
       when: 
         - sync_to_netbox | default(false)
         - existing_vms_check is defined
         - existing_vms_check.json.results is defined
 
-    - name: "Initialize empty list if no VMs"
+    - name: "Initialize empty lists if no VMs"
       set_fact:
         existing_vm_names: []
+        existing_vm_names_clean: []
+        existing_vm_cluster_names: []
+        existing_vms_map: {}
       when: 
         - sync_to_netbox | default(false)
         - existing_vm_names is not defined
