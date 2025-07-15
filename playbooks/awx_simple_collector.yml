@@ -119,45 +119,53 @@
         netbox_vms: "{{ netbox_vms | default([]) + [vm_data] }}"
       vars:
         host_detail: "{{ host_details.results[ansible_loop.index0].json }}"
-        # Parse mais seguro das variáveis com verificação
-        raw_vars: "{{ host_detail.variables | default('{}') }}"
-        host_vars: "{{ (raw_vars | from_json) if (raw_vars and raw_vars != '' and raw_vars != '{}') else {} }}"
+        # Tratamento mais robusto das variáveis
+        raw_vars: "{{ host_detail.variables | default('') }}"
+        # Se raw_vars é string, fazer parse JSON; se já é dict, usar direto
+        host_vars: >-
+          {%- if raw_vars is string and raw_vars != '' and raw_vars != '{}' -%}
+            {{ raw_vars | from_json }}
+          {%- elif raw_vars is mapping -%}
+            {{ raw_vars }}
+          {%- else -%}
+            {}
+          {%- endif -%}
         
-        # Dados essenciais para NetBox com tratamento seguro
+        # Dados essenciais para NetBox
         vm_data:
           # Identificação
           name: "{{ host_detail.name }}"
           description: "{{ host_detail.description | default('Importado do AWX') }}"
           
-          # Status - verificação mais segura
-          power_state: "{{ host_vars.get('vm_power_state', 'unknown') }}"
-          status: "{{ 'active' if host_vars.get('vm_power_state', '') == 'poweredOn' else 'offline' }}"
+          # Status
+          power_state: "{{ host_vars.vm_power_state | default('unknown') }}"
+          status: "{{ 'active' if (host_vars.vm_power_state | default('')) == 'poweredOn' else 'offline' }}"
           
-          # Recursos de Hardware - valores seguros
-          vcpus: "{{ host_vars.get('vm_cpu_count', 1) | int }}"
-          memory_gb: "{{ host_vars.get('vm_memory_gb', 1) | float }}"
-          memory_mb: "{{ (host_vars.get('vm_memory_gb', 1) | float * 1024) | int }}"
+          # Recursos de Hardware
+          vcpus: "{{ host_vars.vm_cpu_count | default(1) | int }}"
+          memory_gb: "{{ host_vars.vm_memory_gb | default(1) | float }}"
+          memory_mb: "{{ (host_vars.vm_memory_gb | default(1) | float * 1024) | int }}"
           
-          # Rede - verificação segura de IPs
-          ansible_host: "{{ host_vars.get('ansible_host', '') }}"
-          primary_ip4: "{{ host_vars.get('ansible_host', '') }}"
-          vm_ip_addresses: "{{ host_vars.get('vm_ip_addresses', []) }}"
+          # Rede
+          ansible_host: "{{ host_vars.ansible_host | default('') }}"
+          primary_ip4: "{{ host_vars.ansible_host | default('') }}"
+          vm_ip_addresses: "{{ host_vars.vm_ip_addresses | default([]) }}"
           
-          # Localização/Organização
-          cluster: "{{ host_vars.get('vm_cluster', 'Default Cluster') }}"
-          datacenter: "{{ host_vars.get('vm_datacenter', 'Default Site') }}"
+          # Localização
+          cluster: "{{ host_vars.vm_cluster | default('Default Cluster') }}"
+          datacenter: "{{ host_vars.vm_datacenter | default('Default Site') }}"
           
           # Sistema
-          platform: "{{ host_vars.get('vm_guest_os', 'Unknown OS') }}"
+          platform: "{{ host_vars.vm_guest_os | default('Unknown OS') }}"
           
           # Metadata AWX
           awx_id: "{{ host_detail.id }}"
           awx_enabled: "{{ host_detail.enabled }}"
           awx_inventory: "{{ inventory_filter | default('VMware Inventory') }}"
           
-          # Debug - mostrar variáveis brutas
-          raw_variables: "{{ raw_vars }}"
-          has_variables: "{{ true if (raw_vars and raw_vars != '' and raw_vars != '{}') else false }}"
+          # Debug
+          has_variables: "{{ true if host_vars else false }}"
+          variables_type: "{{ raw_vars | type_debug }}"
       loop: "{{ filtered_hosts }}"
       loop_control:
         extended: true
@@ -170,6 +178,7 @@
           ============================================================
           🖥️ VM: {{ item.name }}
           📊 Status: {{ item.status | upper }}
+          🔍 Tipo de variáveis: {{ item.variables_type }}
           
           {% if item.has_variables %}
           💻 Hardware:
@@ -185,9 +194,9 @@
             - Datacenter: {{ item.datacenter }}
           
           💽 Sistema: {{ item.platform }}
+          ⚡ Power State: {{ item.power_state }}
           {% else %}
-          ⚠️ Variáveis da VM não disponíveis
-          📝 Dados brutos: {{ item.raw_variables }}
+          ⚠️ Variáveis da VM não disponíveis ou vazias
           {% endif %}
           
           🔗 AWX ID: {{ item.awx_id }}
