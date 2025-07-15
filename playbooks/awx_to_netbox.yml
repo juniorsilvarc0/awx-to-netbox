@@ -4,20 +4,43 @@
   gather_facts: false
 
   tasks:
-    - name: Executar script Python diretamente do repositório
+    - name: Verificar diretório de trabalho
       ansible.builtin.shell: |
+        echo "📂 Diretório atual: $(pwd)"
+        echo "📋 Conteúdo do diretório:"
+        ls -la
+        echo ""
+        echo "🔍 Verificando se script existe:"
+        ls -la scripts/awx-netbox.py || echo "❌ Script não encontrado!"
+        echo ""
+        echo "🐍 Verificando Python:"
+        python3 --version
+        echo ""
         echo "🔍 Verificando variáveis..."
         echo "AWX_USERNAME: ${AWX_USERNAME:-'NÃO DEFINIDO'}"
         echo "AWX_PASSWORD: ${AWX_PASSWORD:+'DEFINIDO'}"
         echo "NETBOX_API: ${NETBOX_API:-'NÃO DEFINIDO'}"
         echo "NETBOX_TOKEN: ${NETBOX_TOKEN:+'DEFINIDO'}"
-        echo ""
+      args:
+        chdir: "{{ ansible_env.ANSIBLE_PROJECT_DIR | default('.') }}"
+      register: debug_result
+
+    - name: Mostrar debug
+      debug:
+        var: debug_result.stdout_lines
+
+    - name: Executar script Python
+      ansible.builtin.shell: |
         echo "🚀 Executando script Python..."
         python3 scripts/awx-netbox.py
       args:
         chdir: "{{ ansible_env.ANSIBLE_PROJECT_DIR | default('.') }}"
       register: script_result
+      failed_when: false
 
     - name: Mostrar resultado do script
       debug:
-        var: script_result
+        msg: |
+          Return code: {{ script_result.rc }}
+          STDOUT: {{ script_result.stdout }}
+          STDERR: {{ script_result.stderr }}
