@@ -57,45 +57,83 @@ class SimpleAWXCollector:
 
     def list_hosts(self):
         print("🔍 Conectando ao AWX...")
-        inv_url = f"{AWX_URL}/api/v2/inventories/"
-        invs = self._paginated_get(inv_url)
-        if not invs:
-            print("❌ Nenhum inventário encontrado")
-            return []
+        try:
+            inv_url = f"{AWX_URL}/api/v2/inventories/"
+            invs = self._paginated_get(inv_url)
+            if not invs:
+                print("❌ Nenhum inventário encontrado")
+                return []
 
-        all_hosts = []
-        for inv in invs:
-            inv_id = inv["id"]
-            inv_name = inv["name"]
+            # Procurar apenas o inventário "VMware Inventory"
+            vmware_inv = None
+            for inv in invs:
+                if inv["name"] == "VMware Inventory":
+                    vmware_inv = inv
+                    break
+            
+            if not vmware_inv:
+                print("❌ Inventário 'VMware Inventory' não encontrado!")
+                available_invs = [inv["name"] for inv in invs]
+                print(f"   Inventários disponíveis: {available_invs}")
+                return []
+
+            inv_id = vmware_inv["id"]
+            inv_name = vmware_inv["name"]
             print(f"📦 Coletando hosts do inventário '{inv_name}' (ID {inv_id})")
-            url = f"{AWX_URL}/api/v2/inventories/{inv_id}/hosts/"
-            hosts_raw = self._paginated_get(url)
-            for host in hosts_raw:
-                try:
-                    vars = json.loads(host.get("variables", "{}"))
-                except json.JSONDecodeError:
-                    print(f"⚠️ Ignorando host {host['name']} - variáveis inválidas")
-                    continue
+            
+            try:
+                url = f"{AWX_URL}/api/v2/inventories/{inv_id}/hosts/"
+                hosts_raw = self._paginated_get(url)
+                print(f"   └─ Encontrados {len(hosts_raw)} hosts")
+                
+                all_hosts = []
+                for host in hosts_raw:
+                    try:
+                        vars = json.loads(host.get("variables", "{}"))
+                    except json.JSONDecodeError:
+                        print(f"⚠️ Ignorando host {host['name']} - variáveis inválidas")
+                        continue
 
-                vars["vm_name"] = vars.get("vm_name", host["name"])
-                vars["vm_uuid"] = vars.get("vm_uuid", "")
-                vars["vm_ip_addresses"] = vars.get("vm_ip_addresses", [])
-                vars["vm_cluster"] = vars.get("vm_cluster", "")
-                vars["vm_cpu_count"] = vars.get("vm_cpu_count", 1)
-                vars["vm_memory_mb"] = vars.get("vm_memory_mb", 0)
-                vars["vm_disk_total_gb"] = vars.get("vm_disk_total_gb", 0)
-                all_hosts.append(vars)
+                    vars["vm_name"] = vars.get("vm_name", host["name"])
+                    vars["vm_uuid"] = vars.get("vm_uuid", "")
+                    vars["vm_ip_addresses"] = vars.get("vm_ip_addresses", [])
+                    vars["vm_cluster"] = vars.get("vm_cluster", "")
+                    vars["vm_cpu_count"] = vars.get("vm_cpu_count", 1)
+                    vars["vm_memory_mb"] = vars.get("vm_memory_mb", 0)
+                    vars["vm_disk_total_gb"] = vars.get("vm_disk_total_gb", 0)
+                    all_hosts.append(vars)
+                    
+            except Exception as e:
+                print(f"❌ Erro ao processar inventário {inv_name}: {e}")
+                return []
 
-        print(f"✅ Total de VMs encontradas: {len(all_hosts)}")
-        return all_hosts
+            print(f"✅ Total de VMs encontradas: {len(all_hosts)}")
+            return all_hosts
+            
+        except Exception as e:
+            print(f"❌ Erro fatal na coleta do AWX: {e}")
+            raise
 
     def _paginated_get(self, url):
         results = []
+        page = 1
         while url:
-            r = self.session.get(url)
-            data = r.json()
-            results.extend(data.get("results", []))
-            url = data.get("next")
+            try:
+                print(f"   └─ Página {page}: {url}")
+                r = self.session.get(url)
+                r.raise_for_status()
+                data = r.json()
+                page_results = data.get("results", [])
+                results.extend(page_results)
+                url = data.get("next")
+                print(f"   └─ Página {page}: {len(page_results)} itens, total: {len(results)}")
+                page += 1
+            except requests.exceptions.RequestException as e:
+                print(f"❌ Erro na requisição: {e}")
+                break
+            except json.JSONDecodeError as e:
+                print(f"❌ Erro ao decodificar JSON: {e}")
+                break
         return results
 
 # === FUNÇÕES DE REGISTRO NO NETBOX ===
@@ -118,7 +156,6 @@ def get_id_by_name(endpoint, name):
 
 def ensure_vm(vm):
     name = vm.get("vm_name")
-    uuid = vm.get("vm_uuid", "")
 
     site_id = get_id_by_name("dcim/sites", FORCE_SITE)
     cluster_id = get_id_by_name("virtualization/clusters", vm.get("vm_cluster"))
