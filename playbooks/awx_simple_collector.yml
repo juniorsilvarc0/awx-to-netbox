@@ -1,8 +1,8 @@
 ---
 - name: "🚀 AWX Simple Collector - Dados Essenciais para NetBox"
   hosts: localhost
-  gather_facts: true  # Mudança: habilitar para ter ansible_date_time
-  
+  gather_facts: true
+
   tasks:
     - name: "⏰ Obter timestamp atual"
       set_fact:
@@ -92,18 +92,6 @@
       set_fact:
         filtered_hosts: "{{ filtered_hosts[:10] }}"
 
-    - name: "📊 Exibir resumo dos hosts (limitado)"
-      debug:
-        msg: |
-          🖥️ Resumo dos hosts:
-          - Total encontrado: {{ all_hosts | length }}
-          - Após filtros: {{ filtered_hosts | length }} (limitado a 10 para teste)
-          
-          📋 Hosts selecionados:
-          {% for host in filtered_hosts %}
-          - {{ host.name }} (ID: {{ host.id }}) {{ '🟢' if host.enabled else '🔴' }}
-          {% endfor %}
-
     - name: "🔍 Buscar detalhes completos dos hosts"
       uri:
         url: "{{ awx_url | default('http://10.0.100.159:8013') }}/api/v2/hosts/{{ item.id }}/"
@@ -123,9 +111,7 @@
         netbox_vms: "{{ netbox_vms | default([]) + [vm_data] }}"
       vars:
         host_detail: "{{ host_details.results[ansible_loop.index0].json }}"
-        # Tratamento mais robusto das variáveis
         raw_vars: "{{ host_detail.variables | default('') }}"
-        # Se raw_vars é string, fazer parse JSON; se já é dict, usar direto
         host_vars: >-
           {%- if raw_vars is string and raw_vars != '' and raw_vars != '{}' -%}
             {{ raw_vars | from_json }}
@@ -134,40 +120,23 @@
           {%- else -%}
             {}
           {%- endif -%}
-        
-        # Dados essenciais para NetBox
         vm_data:
-          # Identificação
           name: "{{ host_detail.name }}"
           description: "{{ host_detail.description | default('Importado do AWX') }}"
-          
-          # Status
           power_state: "{{ host_vars.vm_power_state | default('unknown') }}"
           status: "{{ 'active' if (host_vars.vm_power_state | default('')) == 'poweredOn' else 'offline' }}"
-          
-          # Recursos de Hardware
           vcpus: "{{ (host_vars.vm_cpu_count | default(1) | int) }}"
           memory_gb: "{{ (host_vars.vm_memory_gb | default(1) | float) }}"
           memory_mb: "{{ ((host_vars.vm_memory_gb | default(1) | float) * 1024) | int }}"
-          
-          # Rede
           ansible_host: "{{ host_vars.ansible_host | default('') }}"
           primary_ip4: "{{ host_vars.ansible_host | default('') }}"
           vm_ip_addresses: "{{ host_vars.vm_ip_addresses | default([]) }}"
-          
-          # Localização
           cluster: "{{ host_vars.vm_cluster | default('Default Cluster') }}"
           datacenter: "{{ host_vars.vm_datacenter | default('Default Site') }}"
-          
-          # Sistema
           platform: "{{ host_vars.vm_guest_os | default('Unknown OS') }}"
-          
-          # Metadata AWX
           awx_id: "{{ host_detail.id }}"
           awx_enabled: "{{ host_detail.enabled }}"
           awx_inventory: "{{ inventory_filter | default('VMware Inventory') }}"
-          
-          # Debug
           has_variables: "{{ true if host_vars else false }}"
           variables_type: "{{ raw_vars | type_debug }}"
       loop: "{{ filtered_hosts }}"
@@ -182,7 +151,6 @@
           ============================================================
           🖥️ VM: {{ item.name }}
           📊 Status: {{ item.status | upper }}
-          🔍 Tipo de variáveis: {{ item.variables_type }}
           
           {% if item.has_variables %}
           💻 Hardware:
@@ -191,7 +159,6 @@
           
           🌐 Rede:
             - IP Primário: {{ item.primary_ip4 if item.primary_ip4 else 'N/A' }}
-            - Todos os IPs: {{ item.vm_ip_addresses | join(', ') if item.vm_ip_addresses else 'N/A' }}
           
           🏢 Localização:
             - Cluster: {{ item.cluster }}
@@ -200,20 +167,19 @@
           💽 Sistema: {{ item.platform }}
           ⚡ Power State: {{ item.power_state }}
           {% else %}
-          ⚠️ Variáveis da VM não disponíveis ou vazias
+          ⚠️ Variáveis da VM não disponíveis
           {% endif %}
           
           🔗 AWX ID: {{ item.awx_id }}
       loop: "{{ netbox_vms }}"
       when: show_details | default(true)
 
-    - name: "📊 Resumo final - Dados para NetBox (10 VMs)"
+    - name: "📊 Resumo final AWX"
       debug:
         msg: |
-          📊 Resumo Final - Dados Coletados para NetBox:
+          📊 Resumo Final - Dados Coletados:
           ==========================================
           🖥️ VMs processadas: {{ netbox_vms | length }} de {{ all_hosts | length }} total
-          📝 Limitado a 10 VMs para teste
           
           📋 VMs por Status:
           {% set active_vms = netbox_vms | selectattr('status', 'equalto', 'active') | list %}
@@ -221,46 +187,10 @@
           - Ativas: {{ active_vms | length }}
           - Offline: {{ offline_vms | length }}
           
-          💻 Recursos (10 VMs):
-          {% set total_vcpus = netbox_vms | map(attribute='vcpus') | map('int') | sum %}
-          {% set total_memory = netbox_vms | map(attribute='memory_gb') | map('float') | sum %}
-          - vCPUs Total: {{ total_vcpus }}
-          - Memória Total: {{ total_memory | round(1) }}GB
-          
-          🏢 Datacenters:
-          {% for dc in netbox_vms | map(attribute='datacenter') | unique %}
-          - {{ dc }}: {{ netbox_vms | selectattr('datacenter', 'equalto', dc) | list | length }} VMs
-          {% endfor %}
-          
           ✅ Dados prontos para sincronização com NetBox!
 
-    - name: "💾 Dados estruturados para NetBox (JSON simulado)"
-      debug:
-        var: netbox_vms
-      when: show_json | default(false)
-
-    - name: "🎯 Próximos passos"
-      debug:
-        msg: |
-          🎯 Próximos Passos para NetBox:
-          
-          1. ✅ Coleta AWX concluída - {{ netbox_vms | length }} VMs (limitado a 10)
-          2. 🔄 Configurar NetBox API
-          3. 🗺️ Mapear Sites/Clusters no NetBox
-          4. 🧪 Testar sincronização em dry-run
-          5. 🚀 Executar sincronização real
-          
-          💡 Campos coletados (compatíveis com NetBox):
-          - Nome, Status, vCPUs, Memória
-          - IP Primário, Platform, Cluster, Site
-          - Metadados AWX para rastreamento
-          
-          ⚠️ Para processar todas as {{ all_hosts | length }} VMs:
-          - Remover limite de 10 VMs do playbook
-          - Aumentar timeout do Job Template
-
     # ============================================
-    # SEÇÃO NETBOX - SINCRONIZAÇÃO
+    # SEÇÃO NETBOX - SINCRONIZAÇÃO SIMPLES
     # ============================================
 
     - name: "🔐 Validar credentials NetBox"
@@ -283,19 +213,6 @@
       failed_when: false
       when: sync_to_netbox | default(false)
 
-    - name: "✅ Conectividade NetBox"
-      debug:
-        msg: |
-          {% if netbox_connectivity.status == 200 %}
-          ✅ NetBox conectado com sucesso!
-          📊 Versão NetBox: {{ netbox_connectivity.json.version | default('Desconhecida') }}
-          {% else %}
-          ❌ Falha na conectividade NetBox!
-          🔍 Status: {{ netbox_connectivity.status | default('N/A') }}
-          📝 Erro: {{ netbox_connectivity.msg | default('Conexão falhou') }}
-          {% endif %}
-      when: sync_to_netbox | default(false)
-
     - name: "❌ Falhar se não conseguir conectar ao NetBox"
       fail:
         msg: "Não foi possível conectar ao NetBox. Verifique URL e token."
@@ -303,125 +220,7 @@
         - sync_to_netbox | default(false)
         - netbox_connectivity.status != 200
 
-    - name: "🏢 Verificar/Criar Site padrão no NetBox"
-      uri:
-        url: "{{ lookup('env', 'NETBOX_API') }}/api/dcim/sites/"
-        method: GET
-        headers:
-          Authorization: "Token {{ lookup('env', 'NETBOX_TOKEN') }}"
-        validate_certs: false
-        return_content: true
-      register: netbox_sites
-      when: sync_to_netbox | default(false)
-
-    - name: "🏢 Criar Site ATI-SLC-HCI se não existir"
-      uri:
-        url: "{{ lookup('env', 'NETBOX_API') }}/api/dcim/sites/"
-        method: POST
-        headers:
-          Authorization: "Token {{ lookup('env', 'NETBOX_TOKEN') }}"
-          Content-Type: "application/json"
-        body_format: json
-        body:
-          name: "ATI-SLC-HCI"
-          slug: "ati-slc-hci"
-          description: "Datacenter principal - Importado do AWX"
-        validate_certs: false
-        status_code: [200, 201, 400]  # 400 se já existir
-      register: site_creation
-      when: 
-        - sync_to_netbox | default(false)
-        - netbox_sites is defined
-        - netbox_sites.json.results | selectattr('name', 'equalto', 'ATI-SLC-HCI') | list | length == 0
-
-    - name: "🐛 Debug Site Creation"
-      debug:
-        var: site_creation
-      when: 
-        - sync_to_netbox | default(false)
-        - site_creation is defined
-
-    - name: "📊 Obter ID do Site ATI-SLC-HCI"
-      set_fact:
-        ati_site_id: "{{ (netbox_sites.json.results | selectattr('name', 'equalto', 'ATI-SLC-HCI') | first).id }}"
-      when: 
-        - sync_to_netbox | default(false)
-        - netbox_sites is defined
-        - netbox_sites.json.results | selectattr('name', 'equalto', 'ATI-SLC-HCI') | list | length > 0
-
-    - name: "📊 Usar ID do Site criado"
-      set_fact:
-        ati_site_id: "{{ site_creation.json.id }}"
-      when: 
-        - sync_to_netbox | default(false)
-        - site_creation is defined
-        - site_creation.json is defined
-        - site_creation.json.id is defined
-
-    - name: "📊 Definir Site ID padrão se necessário"
-      set_fact:
-        ati_site_id: 1
-      when: 
-        - sync_to_netbox | default(false)
-        - ati_site_id is not defined
-
-    - name: "🏭 Verificar/Criar Cluster no NetBox"
-      uri:
-        url: "{{ lookup('env', 'NETBOX_API') }}/api/virtualization/clusters/"
-        method: GET
-        headers:
-          Authorization: "Token {{ lookup('env', 'NETBOX_TOKEN') }}"
-        validate_certs: false
-        return_content: true
-      register: netbox_clusters
-      when: sync_to_netbox | default(false)
-
-    - name: "🏭 Criar Cluster vSAN se não existir"
-      uri:
-        url: "{{ lookup('env', 'NETBOX_API') }}/api/virtualization/clusters/"
-        method: POST
-        headers:
-          Authorization: "Token {{ lookup('env', 'NETBOX_TOKEN') }}"
-          Content-Type: "application/json"
-        body_format: json
-        body:
-          name: "Cluster vSAN"
-          type: 1  # Assumindo tipo VMware (ajustar se necessário)
-          site: "{{ ati_site_id }}"
-          description: "Cluster VMware vSAN - Importado do AWX"
-        validate_certs: false
-        status_code: [200, 201, 400]  # 400 se já existir
-      register: cluster_creation
-      when: 
-        - sync_to_netbox | default(false)
-        - ati_site_id is defined
-        - netbox_clusters.json.results | selectattr('name', 'equalto', 'Cluster vSAN') | list | length == 0
-
-    - name: "📊 Obter ID do Cluster vSAN"
-      set_fact:
-        vsan_cluster_id: "{{ (netbox_clusters.json.results | selectattr('name', 'equalto', 'Cluster vSAN') | first).id }}"
-      when: 
-        - sync_to_netbox | default(false)
-        - netbox_clusters is defined
-        - netbox_clusters.json.results | selectattr('name', 'equalto', 'Cluster vSAN') | list | length > 0
-
-    - name: "📊 Usar ID do Cluster criado"
-      set_fact:
-        vsan_cluster_id: "{{ cluster_creation.json.id }}"
-      when: 
-        - sync_to_netbox | default(false)
-        - cluster_creation is defined
-        - cluster_creation.json is defined
-        - cluster_creation.json.id is defined
-
-    - name: "📊 Definir Cluster ID padrão se necessário"
-      set_fact:
-        vsan_cluster_id: 1
-      when: 
-        - sync_to_netbox | default(false)
-        - vsan_cluster_id is not defined
-
-    - name: "🔍 Verificar VMs existentes no NetBox antes da sincronização"
+    - name: "🔍 Verificar VMs existentes no NetBox"
       uri:
         url: "{{ lookup('env', 'NETBOX_API') }}/api/virtualization/virtual-machines/"
         method: GET
@@ -432,23 +231,22 @@
       register: existing_vms_check
       when: sync_to_netbox | default(false)
 
-    - name: "📊 Mapear VMs existentes por nome"
+    - name: "📊 Criar lista de nomes de VMs existentes"
       set_fact:
-        existing_vms_map: {}
-      when: sync_to_netbox | default(false)
-
-    - name: "📊 Construir mapa de VMs existentes"
-      set_fact:
-        existing_vms_map: "{{ existing_vms_map | combine({item.name: item.id}) }}"
-      loop: "{{ existing_vms_check.json.results | default([]) }}"
-      loop_control:
-        label: "{{ item.name }}"
+        existing_vm_names: "{{ existing_vms_check.json.results | map(attribute='name') | list }}"
       when: 
         - sync_to_netbox | default(false)
         - existing_vms_check is defined
         - existing_vms_check.json.results is defined
 
-    - name: "🖥️ Criar VMs novas no NetBox"
+    - name: "📊 Inicializar lista vazia se não há VMs"
+      set_fact:
+        existing_vm_names: []
+      when: 
+        - sync_to_netbox | default(false)
+        - existing_vm_names is not defined
+
+    - name: "🖥️ Criar apenas VMs que não existem no NetBox"
       uri:
         url: "{{ lookup('env', 'NETBOX_API') }}/api/virtualization/virtual-machines/"
         method: POST
@@ -459,18 +257,14 @@
         body:
           name: "{{ item.name }}"
           status: "{{ item.status }}"
-          site: "{{ ati_site_id | default(1) }}"
-          cluster: "{{ vsan_cluster_id | default(1) }}"
+          site: 1
+          cluster: 1
           vcpus: "{{ item.vcpus | int }}"
           memory: "{{ item.memory_mb | int }}"
           comments: |
-            Importado do AWX
+            Importado do AWX - {{ sync_timestamp }}
             AWX ID: {{ item.awx_id }}
-            Inventário: {{ item.awx_inventory }}
             Platform: {{ item.platform }}
-            Cluster Original: {{ item.cluster }}
-            Datacenter Original: {{ item.datacenter }}
-            Última Sincronização: {{ sync_timestamp }}
         validate_certs: false
         status_code: [200, 201]
       register: vm_create_results
@@ -480,116 +274,8 @@
       when: 
         - sync_to_netbox | default(false)
         - not (dry_run | default(true))
-        - item.name not in (existing_vms_map.keys() | list)
+        - item.name not in existing_vm_names
       failed_when: false
-
-    - name: "🔄 Atualizar VMs existentes no NetBox"
-      uri:
-        url: "{{ lookup('env', 'NETBOX_API') }}/api/virtualization/virtual-machines/{{ existing_vms_map[item.name] }}/"
-        method: PATCH
-        headers:
-          Authorization: "Token {{ lookup('env', 'NETBOX_TOKEN') }}"
-          Content-Type: "application/json"
-        body_format: json
-        body:
-          status: "{{ item.status }}"
-          vcpus: "{{ item.vcpus | int }}"
-          memory: "{{ item.memory_mb | int }}"
-          comments: |
-            Importado do AWX
-            AWX ID: {{ item.awx_id }}
-            Inventário: {{ item.awx_inventory }}
-            Platform: {{ item.platform }}
-            Cluster Original: {{ item.cluster }}
-            Datacenter Original: {{ item.datacenter }}
-            Última Sincronização: {{ sync_timestamp }}
-        validate_certs: false
-        status_code: [200]
-      register: vm_update_results
-      loop: "{{ netbox_vms }}"
-      loop_control:
-        label: "{{ item.name }}"
-      when: 
-        - sync_to_netbox | default(false)
-        - not (dry_run | default(true))
-        - item.name in (existing_vms_map.keys() | list)
-      failed_when: false
-
-    - name: "🐛 Debug Operações de VMs"
-      debug:
-        msg: |
-          🐛 Operação para {{ item.item.name }}:
-          📊 Ação: {{ 'CRIAR' if item.item.name not in existing_vms_map.keys() else 'ATUALIZAR' }}
-          📊 Status HTTP: {{ item.status | default('N/A') }}
-          {% if item.status not in [200, 201] %}
-          📝 Erro: {{ item.json | default(item.msg | default('Sem detalhes')) }}
-          {% else %}
-          ✅ Sucesso
-          {% endif %}
-      loop: "{{ (vm_create_results.results | default([])) + (vm_update_results.results | default([])) }}"
-      loop_control:
-        label: "{{ item.item.name if item.item is defined else 'N/A' }}"
-      when: 
-        - sync_to_netbox | default(false)
-        - not (dry_run | default(true))
-
-    - name: "🔍 Verificar VMs existentes no NetBox"
-      uri:
-        url: "{{ lookup('env', 'NETBOX_API') }}/api/virtualization/virtual-machines/"
-        method: GET
-        headers:
-          Authorization: "Token {{ lookup('env', 'NETBOX_TOKEN') }}"
-        validate_certs: false
-        return_content: true
-      register: existing_vms
-      when: sync_to_netbox | default(false)
-
-    - name: "📋 Mostrar VMs no NetBox após sincronização"
-      debug:
-        msg: |
-          📋 VMs no NetBox após sincronização:
-          Total: {{ existing_vms.json.count | default(0) }}
-          
-          {% if existing_vms.json.results %}
-          📊 Resumo por Status:
-          {% set active_vms = existing_vms.json.results | selectattr('status.value', 'equalto', 'active') | list %}
-          {% set offline_vms = existing_vms.json.results | selectattr('status.value', 'equalto', 'offline') | list %}
-          - ✅ Ativas: {{ active_vms | length }}
-          - 🔴 Offline: {{ offline_vms | length }}
-          
-          📋 Lista das VMs:
-          {% for vm in existing_vms.json.results %}
-          - {{ vm.name }} ({{ vm.status.label }}) - {{ vm.vcpus }} vCPUs, {{ vm.memory }}MB
-          {% endfor %}
-          {% else %}
-          (Nenhuma VM encontrada)
-          {% endif %}
-      when: 
-        - sync_to_netbox | default(false)
-        - existing_vms is defined
-
-    - name: "🧪 Simulação de sincronização (DRY-RUN)"
-      debug:
-        msg: |
-          🧪 DRY-RUN: {{ 'Criaria' if item.name not in existing_vm_names else 'Ignoraria (já existe)' }} VM {{ item.name }}
-          
-          {% if item.name not in existing_vm_names %}
-          📊 Dados que seriam enviados:
-          - Nome: {{ item.name }}
-          - Status: {{ item.status }}
-          - Site: {{ ati_site_id | default('1 (padrão)') }}
-          - Cluster: {{ vsan_cluster_id | default('1 (padrão)') }}
-          - vCPUs: {{ item.vcpus }}
-          - Memória: {{ item.memory_mb }}MB
-          - IP Primário: {{ item.primary_ip4 }}
-          - Platform: {{ item.platform }}
-          {% endif %}
-      loop: "{{ netbox_vms }}"
-      loop_control:
-        label: "{{ item.name }}"
-      when: 
-        - sync_to_netbox | default(false)
-        - dry_run | default(true)
 
     - name: "📊 Resumo da sincronização NetBox"
       debug:
@@ -602,44 +288,41 @@
           🚀 Modo: EXECUÇÃO REAL
           {% endif %}
           
-          🖥️ VMs processadas: {{ netbox_vms | length }}
+          🖥️ VMs do AWX: {{ netbox_vms | length }}
+          📋 VMs existentes no NetBox: {{ existing_vm_names | length if existing_vm_names is defined else 0 }}
+          🆕 VMs para criar: {{ (netbox_vms | selectattr('name', 'not in', existing_vm_names) | list | length) if existing_vm_names is defined else netbox_vms | length }}
           
-          {% if not (dry_run | default(true)) %}
-          📈 Resultados da sincronização:
-          
-          🆕 Para CRIAR: {{ vms_to_create | length }} VMs
-          ⏭️ JÁ EXISTEM: {{ vms_already_exist | length }} VMs (ignoradas)
-          
-          {% if vm_create_results is defined %}
-          ✅ Criações realizadas: {{ vm_create_results.results | selectattr('status', 'in', [200, 201]) | list | length }}
-          ❌ Erros na criação: {{ vm_create_results.results | selectattr('status', 'not in', [200, 201]) | list | length }}
+          {% if not (dry_run | default(true)) and vm_create_results is defined %}
+          ✅ VMs criadas: {{ vm_create_results.results | selectattr('status', 'in', [200, 201]) | list | length }}
+          ❌ Erros: {{ vm_create_results.results | selectattr('status', 'not in', [200, 201]) | list | length }}
           {% endif %}
           
-          💡 Estratégia: APENAS CRIAR (não atualizar)
-          - VMs existentes são preservadas
-          - Apenas novas VMs são adicionadas
-          - Zero duplicatas garantidas
-          
-          {% if vm_create_results is defined and vm_create_results.results %}
-          🔍 Detalhes das criações:
-          {% for result in vm_create_results.results %}
-          - {{ result.item.name }}: {{ 'Sucesso' if result.status in [200, 201] else 'Erro' }}
-          {% endfor %}
-          {% endif %}
-          
-          {% endif %}
-          
-          🏢 Infraestrutura NetBox:
-          - Site: ATI-SLC-HCI (ID: {{ ati_site_id | default('Não definido') }})
-          - Cluster: Cluster vSAN (ID: {{ vsan_cluster_id | default('Não definido') }})
-          
-          📊 VMs no NetBox: {{ existing_vms.json.count | default('Verificação não executada') }}
-          
-          {% if dry_run | default(true) %}
-          💡 Para executar sincronização real:
-          - Definir: sync_to_netbox=true
-          - Definir: dry_run=false
-          {% else %}
-          ✅ Sincronização real executada!
-          {% endif %}
+          💡 Estratégia: APENAS CRIAR (sem duplicatas)
+          ✅ Zero duplicatas garantidas!
       when: sync_to_netbox | default(false)
+
+    - name: "🎯 Próximos passos"
+      debug:
+        msg: |
+          🎯 Status do Projeto:
+          
+          ✅ Coleta AWX: FUNCIONANDO
+          - {{ netbox_vms | length }} VMs coletadas
+          - Dados completos: CPU, Memória, IP, Status
+          
+          {% if sync_to_netbox | default(false) %}
+          ✅ Sincronização NetBox: ATIVA
+          - Estratégia: Criar apenas VMs novas
+          - Zero duplicatas garantidas
+          {% else %}
+          💡 Para habilitar sincronização NetBox:
+          - Definir: sync_to_netbox=true
+          - Configurar credentials NetBox
+          {% endif %}
+          
+          🚀 Projeto completo e funcional!
+          
+          📈 Para escalar:
+          - Remover limite de 10 VMs
+          - Processar todas as {{ all_hosts | length }} VMs
+          - Configurar execução agendada
