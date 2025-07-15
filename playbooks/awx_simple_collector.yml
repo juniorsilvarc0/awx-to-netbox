@@ -505,7 +505,7 @@
           Content-Type: "application/json"
         body_format: json
         body:
-          primary_ip4: "{{ ip_id if ip_id != '' else null }}"
+          primary_ip4: "{{ ip_id if ip_id != '' else None }}"
         validate_certs: false
         status_code: [200, 201]
       register: vm_update_results
