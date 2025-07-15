@@ -3,10 +3,27 @@
   hosts: localhost
   gather_facts: true
 
+  # Variáveis que podem ser definidas no AWX Job Template:
+  # inventory_filter: "VMware Inventory" (padrão) ou "all" para todos
+  # host_filter: filtro regex para nomes de hosts (opcional)
+  # sync_to_netbox: true/false (padrão: false)
+  # dry_run: true/false (padrão: true)
+  # show_details: true/false (padrão: true)
+
   tasks:
     - name: "Get timestamp"
       set_fact:
         sync_timestamp: "{{ lookup('pipe', 'date +%Y-%m-%d_%H:%M:%S') }}"
+
+    - name: "Show configuration"
+      debug:
+        msg: |
+          🔧 AWX Job Configuration:
+          - Inventory Filter: {{ inventory_filter | default('VMware Inventory') }}
+          - Host Filter: {{ host_filter | default('none') }}
+          - Sync to NetBox: {{ sync_to_netbox | default(false) }}
+          - Dry Run: {{ dry_run | default(true) }}
+          - Show Details: {{ show_details | default(true) }}
 
     - name: "Test AWX connectivity"
       uri:
@@ -35,7 +52,7 @@
       set_fact:
         target_inventories: >-
           {{
-            awx_inventories.json.results if not inventory_filter or inventory_filter == 'all' else
+            awx_inventories.json.results if (inventory_filter | default('VMware Inventory')) == 'all' else
             awx_inventories.json.results | 
             selectattr('name', 'in', (inventory_filter | default('VMware Inventory')).split(',') | map('trim')) | 
             list
@@ -83,6 +100,7 @@
           - Total hosts from AWX: {{ all_hosts | length }}
           - After filtering: {{ filtered_hosts | length }}
           - Inventory names: {{ target_inventories | map(attribute='name') | list }}
+          - Filter used: {{ inventory_filter | default('VMware Inventory') }}
 
     - name: "Get host details"
       uri:
@@ -224,11 +242,10 @@
           VM: {{ item.item.name }}
           Status: {{ item.status | default('No status') }}
           Error: {{ item.msg | default('No error message') }}
-      loop: "{{ vm_create_results.results | selectattr('status', 'defined') | rejectattr('status', 'in', [200, 201]) | list }}"
+      loop: "{{ (vm_create_results.results | selectattr('status', 'defined') | rejectattr('status', 'in', [200, 201]) | list)[:5] }}"
       loop_control:
         label: "{{ item.item.name }}"
       when: 
         - sync_to_netbox | default(false)
         - vm_create_results is defined 
         - vm_create_results.results is defined
-        - ansible_loop.index0 < 5
