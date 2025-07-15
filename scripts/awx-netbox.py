@@ -11,12 +11,33 @@ from urllib3.exceptions import InsecureRequestWarning
 requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 
 # === VARIÁVEIS DE AMBIENTE (são injetadas via credenciais do AWX) ===
-AWX_URL = os.getenv("AWX_URL")
+AWX_URL = os.getenv("AWX_URL", "http://10.0.100.159:8013")
 AWX_USER = os.getenv("AWX_USER") or os.getenv("AWX_USERNAME")
 AWX_PASSWORD = os.getenv("AWX_PASSWORD")
 
 NETBOX_URL = os.getenv("NETBOX_URL") or os.getenv("NETBOX_API")
 NETBOX_TOKEN = os.getenv("NETBOX_TOKEN")
+
+# Verificar se as variáveis necessárias estão definidas
+if not AWX_USER:
+    print("❌ Erro: AWX_USERNAME não definido!")
+    exit(1)
+if not AWX_PASSWORD:
+    print("❌ Erro: AWX_PASSWORD não definido!")
+    exit(1)
+if not NETBOX_URL:
+    print("❌ Erro: NETBOX_API não definido!")
+    exit(1)
+if not NETBOX_TOKEN:
+    print("❌ Erro: NETBOX_TOKEN não definido!")
+    exit(1)
+
+print(f"✅ Configuração:")
+print(f"   AWX URL: {AWX_URL}")
+print(f"   AWX User: {AWX_USER}")
+print(f"   NetBox URL: {NETBOX_URL}")
+print(f"   NetBox Token: {'*' * 20}")
+print()
 
 FORCE_SITE = "ATI-SLC-HCI"
 INTERFACE_TYPE = "1000base-t"
