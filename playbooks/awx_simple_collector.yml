@@ -327,13 +327,22 @@
       register: site_creation
       when: 
         - sync_to_netbox | default(false)
+        - netbox_sites is defined
         - netbox_sites.json.results | selectattr('name', 'equalto', 'ATI-SLC-HCI') | list | length == 0
+
+    - name: "🐛 Debug Site Creation"
+      debug:
+        var: site_creation
+      when: 
+        - sync_to_netbox | default(false)
+        - site_creation is defined
 
     - name: "📊 Obter ID do Site ATI-SLC-HCI"
       set_fact:
         ati_site_id: "{{ (netbox_sites.json.results | selectattr('name', 'equalto', 'ATI-SLC-HCI') | first).id }}"
       when: 
         - sync_to_netbox | default(false)
+        - netbox_sites is defined
         - netbox_sites.json.results | selectattr('name', 'equalto', 'ATI-SLC-HCI') | list | length > 0
 
     - name: "📊 Usar ID do Site criado"
@@ -342,7 +351,15 @@
       when: 
         - sync_to_netbox | default(false)
         - site_creation is defined
-        - site_creation.status == 201
+        - site_creation.json is defined
+        - site_creation.json.id is defined
+
+    - name: "📊 Definir Site ID padrão se necessário"
+      set_fact:
+        ati_site_id: 1
+      when: 
+        - sync_to_netbox | default(false)
+        - ati_site_id is not defined
 
     - name: "🏭 Verificar/Criar Cluster no NetBox"
       uri:
@@ -381,6 +398,7 @@
         vsan_cluster_id: "{{ (netbox_clusters.json.results | selectattr('name', 'equalto', 'Cluster vSAN') | first).id }}"
       when: 
         - sync_to_netbox | default(false)
+        - netbox_clusters is defined
         - netbox_clusters.json.results | selectattr('name', 'equalto', 'Cluster vSAN') | list | length > 0
 
     - name: "📊 Usar ID do Cluster criado"
@@ -389,7 +407,15 @@
       when: 
         - sync_to_netbox | default(false)
         - cluster_creation is defined
-        - cluster_creation.status == 201
+        - cluster_creation.json is defined
+        - cluster_creation.json.id is defined
+
+    - name: "📊 Definir Cluster ID padrão se necessário"
+      set_fact:
+        vsan_cluster_id: 1
+      when: 
+        - sync_to_netbox | default(false)
+        - vsan_cluster_id is not defined
 
     - name: "🖥️ Sincronizar VMs com NetBox"
       uri:
