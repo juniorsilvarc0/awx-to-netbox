@@ -199,12 +199,16 @@ def ensure_vm(vm):
     site_id = get_id_by_name("dcim/sites", FORCE_SITE)
     cluster_id = get_id_by_name("virtualization/clusters", vm.get("vm_cluster"))
 
+    # Determinar status baseado no power state
+    vm_power_state = vm.get("vm_power_state", "")
+    status = "offline" if vm_power_state == "poweredOff" else "active"
+
     payload = {
         "name": name,
         "vcpus": vm.get("vm_cpu_count"),
         "memory": int(vm.get("vm_memory_mb")),
         "disk": int(vm.get("vm_disk_total_gb") * 1024),
-        "status": "active",
+        "status": status,
         "site": site_id,
         "cluster": cluster_id,
         "comments": f"Atualizado via AWX em {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
