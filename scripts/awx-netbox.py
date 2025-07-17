@@ -280,24 +280,57 @@ def main():
     _cache["existing_vms"] = {vm["name"]: vm for vm in paginated_get_all("virtualization/virtual-machines")}
     print_flush(f"   └─ Encontradas {len(_cache['existing_vms'])} VMs no NetBox")
 
-    print_flush(f"🔄 Processando {len(vms)} VMs (somente VMs, sem interfaces/IPs)...")
+    print_flush(f"🔄 Processando {len(vms)} VMs completas (VM + Interface + IP)...")
     success_count = 0
     error_count = 0
     
     for i, vm in enumerate(vms, 1):
         try:
-            if not vm.get("vm_name"):
+            vm_name = vm.get("vm_name")
+            if not vm_name:
                 continue
 
             # Mostrar progresso a cada 5 VMs
             if i % 5 == 0 or i == len(vms):
                 print_flush(f"📝 Progresso: {i}/{len(vms)} VMs ({success_count} ok, {error_count} erros)")
             
+            # 1. Criar/atualizar VM
             vm_id = ensure_vm(vm)
-            if vm_id:
-                success_count += 1
-            else:
+            if not vm_id:
                 error_count += 1
+                continue
+
+            # 2. Criar/atualizar interface eth0
+            interface_id = ensure_interface(vm_id, "eth0")
+            if not interface_id:
+                print_flush(f"⚠️ Falha ao criar interface para VM {vm_name}")
+                error_count += 1
+                continue
+
+            # 3. Processar IPs da VM
+            vm_ips = vm.get("vm_ip_addresses", [])
+            primary_ip_id = None
+            
+            if vm_ips:
+                # Usar o primeiro IP como primário
+                primary_ip = vm_ips[0]
+                if primary_ip and primary_ip != "":
+                    # Adicionar /32 se não tiver máscara
+                    if "/" not in primary_ip:
+                        primary_ip = f"{primary_ip}/32"
+                    
+                    primary_ip_id = ensure_ip(primary_ip, interface_id)
+                    if primary_ip_id:
+                        print_flush(f"✅ IP {primary_ip} associado à interface eth0 da VM {vm_name}")
+                    else:
+                        print_flush(f"⚠️ Falha ao associar IP {primary_ip} à VM {vm_name}")
+
+            # 4. Definir IP primário na VM
+            if primary_ip_id:
+                update_primary_ip(vm_id, primary_ip_id)
+                print_flush(f"🎯 IP primário definido para VM {vm_name}")
+
+            success_count += 1
 
         except Exception as e:
             error_count += 1
