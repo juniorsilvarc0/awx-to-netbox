@@ -58,7 +58,9 @@ HEADERS = {
 _cache = {
     "sites": {},
     "clusters": {},
-    "existing_vms": None
+    "existing_vms": None,
+    "existing_interfaces": None,
+    "existing_ips": None
 }
 
 # === CLASSE PARA COLETA DO AWX ===
@@ -128,12 +130,19 @@ class SimpleAWXCollector:
             raise
 
     def _paginated_get(self, url):
+        """Paginação robusta para AWX com suporte a 10000+ itens"""
         results = []
         page = 1
+        
+        # Adicionar page_size para AWX se não estiver presente
+        if "page_size" not in url:
+            separator = "&" if "?" in url else "?"
+            url = f"{url}{separator}page_size=200"
+        
         while url:
             try:
-                print_flush(f"   └─ Página {page}: {url}")
-                r = self.session.get(url)
+                print_flush(f"   └─ AWX Página {page}: coletando...")
+                r = self.session.get(url, timeout=60)
                 r.raise_for_status()
                 data = r.json()
                 page_results = data.get("results", [])
@@ -149,14 +158,22 @@ class SimpleAWXCollector:
                 else:
                     url = None
                     
-                print_flush(f"   └─ Página {page}: {len(page_results)} itens, total: {len(results)}")
+                print_flush(f"   └─ AWX Página {page}: +{len(page_results)} itens, total: {len(results)}")
                 page += 1
+                
+                # Limite de segurança
+                if page > 500:
+                    print_flush(f"⚠️ AWX: Limite de páginas atingido")
+                    break
+                    
             except requests.exceptions.RequestException as e:
-                print_flush(f"❌ Erro na requisição: {e}")
+                print_flush(f"❌ AWX Erro na requisição página {page}: {e}")
                 break
             except json.JSONDecodeError as e:
-                print_flush(f"❌ Erro ao decodificar JSON: {e}")
+                print_flush(f"❌ AWX Erro ao decodificar JSON página {page}: {e}")
                 break
+        
+        print_flush(f"✅ AWX: {len(results)} itens coletados em {page-1} páginas")
         return results
 
 # === FUNÇÕES DE REGISTRO NO NETBOX ===
@@ -272,36 +289,79 @@ def ensure_vm(vm):
     return vm_id
 
 def ensure_interface(vm_id, name):
-    existing = paginated_get_all("virtualization/interfaces", f"&virtual_machine_id={vm_id}&name={name}")
-    if existing:
-        return existing[0]["id"]
+    """Criar/verificar interface usando cache para performance"""
+    # Usar cache de interfaces existentes
+    interface_key = f"{vm_id}_{name}"
+    if interface_key in _cache["existing_interfaces"]:
+        return _cache["existing_interfaces"][interface_key]["id"]
 
+    # Se não existe no cache, criar nova interface
     payload = {
         "name": name,
         "virtual_machine": vm_id,
         "type": INTERFACE_TYPE
     }
-    r = requests.post(f"{NETBOX_URL}/api/virtualization/interfaces/", headers=HEADERS, data=json.dumps(payload), verify=False)
-    return r.json().get("id")
+    try:
+        r = requests.post(f"{NETBOX_URL}/api/virtualization/interfaces/", headers=HEADERS, data=json.dumps(payload), verify=False, timeout=30)
+        if r.status_code in [200, 201]:
+            interface_data = r.json()
+            interface_id = interface_data["id"]
+            # Adicionar ao cache
+            _cache["existing_interfaces"][interface_key] = interface_data
+            return interface_id
+        else:
+            print_flush(f"❌ Falha ao criar interface {name}: {r.text}")
+            return None
+    except Exception as e:
+        print_flush(f"❌ Erro ao criar interface {name}: {e}")
+        return None
 
 def ensure_ip(ip_str, interface_id):
-    existing = paginated_get_all("ipam/ip-addresses", f"&address={ip_str}")
-    if existing:
-        ip_id = existing[0]["id"]
-        requests.patch(f"{NETBOX_URL}/api/ipam/ip-addresses/{ip_id}/", headers=HEADERS, data=json.dumps({
-            "assigned_object_type": "virtualization.vminterface",
-            "assigned_object_id": interface_id
-        }), verify=False)
+    """Criar/verificar IP usando cache para performance"""
+    # Extrair apenas o IP sem máscara para comparação
+    ip_only = ip_str.split("/")[0]
+    
+    # Usar cache de IPs existentes (buscar por IP sem máscara)
+    if ip_only in _cache["existing_ips"]:
+        ip_data = _cache["existing_ips"][ip_only]
+        ip_id = ip_data["id"]
+        
+        # Verificar se precisa atualizar a associação
+        current_interface = ip_data.get("assigned_object_id")
+        if current_interface != interface_id:
+            try:
+                requests.patch(f"{NETBOX_URL}/api/ipam/ip-addresses/{ip_id}/", headers=HEADERS, data=json.dumps({
+                    "assigned_object_type": "virtualization.vminterface",
+                    "assigned_object_id": interface_id
+                }), verify=False, timeout=30)
+                # Atualizar cache
+                _cache["existing_ips"][ip_only]["assigned_object_id"] = interface_id
+            except Exception as e:
+                print_flush(f"❌ Erro ao atualizar associação do IP {ip_str}: {e}")
+        
         return ip_id
 
+    # Se não existe no cache, criar novo IP
     payload = {
         "address": ip_str,
         "status": "active",
         "assigned_object_type": "virtualization.vminterface",
         "assigned_object_id": interface_id
     }
-    r = requests.post(f"{NETBOX_URL}/api/ipam/ip-addresses/", headers=HEADERS, data=json.dumps(payload), verify=False)
-    return r.json().get("id")
+    try:
+        r = requests.post(f"{NETBOX_URL}/api/ipam/ip-addresses/", headers=HEADERS, data=json.dumps(payload), verify=False, timeout=30)
+        if r.status_code in [200, 201]:
+            ip_data = r.json()
+            ip_id = ip_data["id"]
+            # Adicionar ao cache (usar IP sem máscara como chave)
+            _cache["existing_ips"][ip_only] = ip_data
+            return ip_id
+        else:
+            print_flush(f"❌ Falha ao criar IP {ip_str}: {r.text}")
+            return None
+    except Exception as e:
+        print_flush(f"❌ Erro ao criar IP {ip_str}: {e}")
+        return None
 
 def update_primary_ip(vm_id, ip_id):
     payload = {"primary_ip4": ip_id}
@@ -313,10 +373,36 @@ def main():
     collector = SimpleAWXCollector()
     vms = collector.list_hosts()
 
-    # Pré-carregar cache de VMs existentes
-    print_flush("📋 Carregando VMs existentes do NetBox...")
+    # Pré-carregar TODOS os caches para otimizar performance com 10000+ VMs
+    print_flush("📋 Carregando dados existentes do NetBox...")
+    
+    # 1. Cache de VMs existentes
+    print_flush("   🖥️ Carregando VMs...")
     _cache["existing_vms"] = {vm["name"]: vm for vm in paginated_get_all("virtualization/virtual-machines")}
     print_flush(f"   └─ Encontradas {len(_cache['existing_vms'])} VMs no NetBox")
+    
+    # 2. Cache de interfaces existentes (chave: vm_id_interface_name)
+    print_flush("   🔌 Carregando interfaces...")
+    all_interfaces = paginated_get_all("virtualization/interfaces")
+    _cache["existing_interfaces"] = {}
+    for interface in all_interfaces:
+        vm_id = interface.get("virtual_machine", {}).get("id")
+        if vm_id:
+            interface_key = f"{vm_id}_{interface['name']}"
+            _cache["existing_interfaces"][interface_key] = interface
+    print_flush(f"   └─ Encontradas {len(all_interfaces)} interfaces no NetBox")
+    
+    # 3. Cache de IPs existentes (chave: endereço_ip)
+    print_flush("   🌐 Carregando IPs...")
+    all_ips = paginated_get_all("ipam/ip-addresses")
+    _cache["existing_ips"] = {}
+    for ip in all_ips:
+        ip_address = ip.get("address", "").split("/")[0]  # Remove máscara para comparação
+        if ip_address:
+            _cache["existing_ips"][ip_address] = ip
+    print_flush(f"   └─ Encontrados {len(all_ips)} IPs no NetBox")
+    
+    print_flush(f"✅ Cache completo carregado!")
 
     print_flush(f"🔄 Processando {len(vms)} VMs completas (VM + Interface + IP)...")
     success_count = 0
