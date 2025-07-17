@@ -161,13 +161,51 @@ class SimpleAWXCollector:
 
 # === FUNÇÕES DE REGISTRO NO NETBOX ===
 def paginated_get_all(endpoint, query=""):
-    url = f"{NETBOX_URL}/api/{endpoint}/?limit=1000{query}"
+    """Função robusta para paginação do NetBox com suporte a grandes volumes"""
+    # Usar limit menor para evitar timeouts
+    base_url = f"{NETBOX_URL}/api/{endpoint}/"
+    url = f"{base_url}?limit=500{query}"
     results = []
+    page = 1
+    
+    print_flush(f"🔍 Paginando {endpoint}...")
+    
     while url:
-        r = requests.get(url, headers=HEADERS, verify=False)
-        data = r.json()
-        results.extend(data.get("results", []))
-        url = data.get("next")
+        try:
+            print_flush(f"   └─ Página {page}: {len(results)} itens coletados...")
+            r = requests.get(url, headers=HEADERS, verify=False, timeout=30)
+            r.raise_for_status()
+            data = r.json()
+            
+            page_results = data.get("results", [])
+            results.extend(page_results)
+            
+            # Processar próxima URL
+            next_url = data.get("next")
+            if next_url:
+                # Se a URL é relativa, adicionar o base URL
+                if next_url.startswith('/'):
+                    next_url = f"{NETBOX_URL}{next_url}"
+                url = next_url
+            else:
+                url = None
+                
+            print_flush(f"   └─ Página {page}: +{len(page_results)} itens, total: {len(results)}")
+            page += 1
+            
+            # Limite de segurança para evitar loops infinitos
+            if page > 1000:
+                print_flush(f"⚠️ Limite de páginas atingido para {endpoint}")
+                break
+                
+        except requests.exceptions.RequestException as e:
+            print_flush(f"❌ Erro na requisição página {page}: {e}")
+            break
+        except json.JSONDecodeError as e:
+            print_flush(f"❌ Erro ao decodificar JSON página {page}: {e}")
+            break
+    
+    print_flush(f"✅ {endpoint}: {len(results)} itens coletados em {page-1} páginas")
     return results
 
 def get_id_by_name(endpoint, name):
