@@ -60,7 +60,8 @@ _cache = {
     "clusters": {},
     "existing_vms": None,
     "existing_interfaces": None,
-    "existing_ips": None
+    "existing_ips": None,
+    "existing_tags": None  # Adicionar cache para tags
 }
 
 # === CLASSE PARA COLETA DO AWX ===
@@ -104,7 +105,12 @@ class SimpleAWXCollector:
                 all_hosts = []
                 for host in hosts_raw:
                     try:
-                        vars = json.loads(host.get("variables", "{}"))
+                        # Processar variáveis - pode vir como string JSON
+                        vars_raw = host.get("variables", "{}")
+                        if isinstance(vars_raw, str):
+                            vars = json.loads(vars_raw)
+                        else:
+                            vars = vars_raw
                     except json.JSONDecodeError:
                         print_flush(f"⚠️ Ignorando host {host['name']} - variáveis inválidas")
                         continue
@@ -116,6 +122,7 @@ class SimpleAWXCollector:
                     vars["vm_cpu_count"] = vars.get("vm_cpu_count", 1)
                     vars["vm_memory_mb"] = vars.get("vm_memory_mb", 0)
                     vars["vm_disk_total_gb"] = vars.get("vm_disk_total_gb", 0)
+                    vars["vm_tags"] = vars.get("vm_tags", [])  # Adicionar tags
                     all_hosts.append(vars)
                     
             except Exception as e:
@@ -248,6 +255,46 @@ def get_id_by_name(endpoint, name):
             return item["id"]
     return None
 
+def ensure_tag(tag_name, tag_category, tag_description=""):
+    """Criar ou obter tag usando cache para performance"""
+    # Criar slug da tag - mantém categoria para unicidade
+    tag_slug = f"{tag_category}-{tag_name}".lower()
+    # Remover caracteres especiais
+    replacements = {
+        " ": "-", "ã": "a", "ç": "c", "á": "a", "é": "e", 
+        "í": "i", "ó": "o", "ú": "u", "â": "a", "ê": "e",
+        "ô": "o", "à": "a", "õ": "o"
+    }
+    for old, new in replacements.items():
+        tag_slug = tag_slug.replace(old, new)
+    
+    # Verificar no cache primeiro
+    if tag_slug in _cache["existing_tags"]:
+        return _cache["existing_tags"][tag_slug]["id"]
+    
+    # Se não está no cache, criar nova tag
+    tag_data = {
+        "name": tag_name,  # Apenas o nome, sem a categoria
+        "slug": tag_slug,  # Slug mantém categoria para evitar conflitos
+        "description": tag_description if tag_description else f"Categoria: {tag_category}"
+    }
+    
+    try:
+        r = requests.post(f"{NETBOX_URL}/api/extras/tags/", headers=HEADERS, data=json.dumps(tag_data), verify=False, timeout=30)
+        if r.status_code in [200, 201]:
+            created_tag = r.json()
+            tag_id = created_tag["id"]
+            # Adicionar ao cache
+            _cache["existing_tags"][tag_slug] = created_tag
+            print_flush(f"   🏷️ Tag criada: {tag_name}")
+            return tag_id
+        else:
+            print_flush(f"❌ Falha ao criar tag {tag_name}: {r.text}")
+            return None
+    except Exception as e:
+        print_flush(f"❌ Erro ao criar tag {tag_name}: {e}")
+        return None
+
 def ensure_vm(vm):
     name = vm.get("vm_name")
 
@@ -287,6 +334,34 @@ def ensure_vm(vm):
             return None
 
     return vm_id
+
+def update_vm_tags(vm_id, tag_ids):
+    """Atualizar tags de uma VM preservando tags existentes"""
+    try:
+        # Buscar VM para obter tags atuais
+        r = requests.get(f"{NETBOX_URL}/api/virtualization/virtual-machines/{vm_id}/", headers=HEADERS, verify=False, timeout=30)
+        if r.status_code == 200:
+            vm_data = r.json()
+            existing_tag_ids = [tag["id"] for tag in vm_data.get("tags", [])]
+            
+            # Combinar tags existentes com as novas
+            all_tag_ids = list(set(existing_tag_ids + tag_ids))
+            
+            # Atualizar VM com todas as tags
+            update_data = {"tags": all_tag_ids}
+            
+            r_update = requests.patch(f"{NETBOX_URL}/api/virtualization/virtual-machines/{vm_id}/", 
+                                    headers=HEADERS, data=json.dumps(update_data), verify=False, timeout=30)
+            
+            if r_update.status_code == 200:
+                new_tags_count = len(tag_ids) - len(set(tag_ids).intersection(set(existing_tag_ids)))
+                if new_tags_count > 0:
+                    print_flush(f"   🏷️ {new_tags_count} novas tags adicionadas à VM")
+                return True
+        return False
+    except Exception as e:
+        print_flush(f"❌ Erro ao atualizar tags da VM: {e}")
+        return False
 
 def ensure_interface(vm_id, name):
     """Criar/verificar interface usando cache para performance"""
@@ -402,9 +477,15 @@ def main():
             _cache["existing_ips"][ip_address] = ip
     print_flush(f"   └─ Encontrados {len(all_ips)} IPs no NetBox")
     
+    # 4. Cache de tags existentes (chave: slug)
+    print_flush("   🏷️  Carregando tags...")
+    all_tags = paginated_get_all("extras/tags")
+    _cache["existing_tags"] = {tag["slug"]: tag for tag in all_tags}
+    print_flush(f"   └─ Encontradas {len(all_tags)} tags no NetBox")
+    
     print_flush(f"✅ Cache completo carregado!")
 
-    print_flush(f"🔄 Processando {len(vms)} VMs completas (VM + Interface + IP)...")
+    print_flush(f"🔄 Processando {len(vms)} VMs completas (VM + Interface + IP + Tags)...")
     success_count = 0
     error_count = 0
     
@@ -424,14 +505,31 @@ def main():
                 error_count += 1
                 continue
 
-            # 2. Criar/atualizar interface eth0
+            # 2. Processar tags da VM
+            vm_tags = vm.get("vm_tags", [])
+            if vm_tags:
+                tag_ids = []
+                for tag in vm_tags:
+                    tag_name = tag.get("name", "")
+                    tag_category = tag.get("category", "")
+                    tag_description = tag.get("description", "")
+                    
+                    if tag_name and tag_category:
+                        tag_id = ensure_tag(tag_name, tag_category, tag_description)
+                        if tag_id:
+                            tag_ids.append(tag_id)
+                
+                if tag_ids:
+                    update_vm_tags(vm_id, tag_ids)
+
+            # 3. Criar/atualizar interface eth0
             interface_id = ensure_interface(vm_id, "eth0")
             if not interface_id:
                 print_flush(f"⚠️ Falha ao criar interface para VM {vm_name}")
                 error_count += 1
                 continue
 
-            # 3. Processar IPs da VM
+            # 4. Processar IPs da VM
             vm_ips = vm.get("vm_ip_addresses", [])
             primary_ip_id = None
             
@@ -449,7 +547,7 @@ def main():
                     else:
                         print_flush(f"⚠️ Falha ao associar IP {primary_ip} à VM {vm_name}")
 
-            # 4. Definir IP primário na VM
+            # 5. Definir IP primário na VM
             if primary_ip_id:
                 update_primary_ip(vm_id, primary_ip_id)
                 print_flush(f"🎯 IP primário definido para VM {vm_name}")
@@ -461,5 +559,6 @@ def main():
             print_flush(f"❌ Erro ao processar VM {vm.get('vm_name')}: {e}")
             
     print_flush(f"🎉 Sincronização concluída! ✅ {success_count} VMs processadas, ❌ {error_count} erros")
+
 if __name__ == "__main__":
     main()
