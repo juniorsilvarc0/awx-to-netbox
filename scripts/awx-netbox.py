@@ -526,59 +526,25 @@ def main():
     collector = SimpleAWXCollector()
     vms = collector.list_hosts()
 
-    # Pré-carregar TODOS os caches para otimizar performance com 10000+ VMs
-    print_flush("📋 Carregando dados existentes do NetBox...")
+    # Carregar apenas cache essencial de VMs para otimizar
+    print_flush("📋 Carregando cache essencial do NetBox...")
     
     try:
-        # 1. Cache de VMs existentes
+        # 1. Cache de VMs existentes (essencial)
         print_flush("   🖥️ Carregando VMs...")
         all_vms = paginated_get_all("virtualization/virtual-machines")
         _cache["existing_vms"] = {vm["name"]: vm for vm in all_vms}
-        print_flush(f"   └─ Encontradas {len(_cache['existing_vms'])} VMs no NetBox")
+        print_flush(f"   └─ ✅ {len(_cache['existing_vms'])} VMs carregadas")
     except Exception as e:
         print_flush(f"❌ Erro ao carregar VMs: {e}")
         _cache["existing_vms"] = {}
     
-    try:
-        # 2. Cache de interfaces existentes (chave: vm_id_interface_name)
-        print_flush("   🔌 Carregando interfaces...")
-        all_interfaces = paginated_get_all("virtualization/interfaces")
-        _cache["existing_interfaces"] = {}
-        for interface in all_interfaces:
-            vm_id = interface.get("virtual_machine", {}).get("id")
-            if vm_id:
-                interface_key = f"{vm_id}_{interface['name']}"
-                _cache["existing_interfaces"][interface_key] = interface
-        print_flush(f"   └─ Encontradas {len(all_interfaces)} interfaces no NetBox")
-    except Exception as e:
-        print_flush(f"❌ Erro ao carregar interfaces: {e}")
-        _cache["existing_interfaces"] = {}
+    # Inicializar outros caches vazios (serão populados sob demanda)
+    _cache["existing_interfaces"] = {}
+    _cache["existing_ips"] = {}
+    _cache["existing_tags"] = {}
     
-    try:
-        # 3. Cache de IPs existentes (chave: endereço_ip)
-        print_flush("   🌐 Carregando IPs...")
-        all_ips = paginated_get_all("ipam/ip-addresses")
-        _cache["existing_ips"] = {}
-        for ip in all_ips:
-            ip_address = ip.get("address", "").split("/")[0]  # Remove máscara para comparação
-            if ip_address:
-                _cache["existing_ips"][ip_address] = ip
-        print_flush(f"   └─ Encontrados {len(all_ips)} IPs no NetBox")
-    except Exception as e:
-        print_flush(f"❌ Erro ao carregar IPs: {e}")
-        _cache["existing_ips"] = {}
-    
-    try:
-        # 4. Cache de tags existentes (chave: slug)
-        print_flush("   🏷️  Carregando tags...")
-        all_tags = paginated_get_all("extras/tags")
-        _cache["existing_tags"] = {tag["slug"]: tag for tag in all_tags}
-        print_flush(f"   └─ Encontradas {len(all_tags)} tags no NetBox")
-    except Exception as e:
-        print_flush(f"❌ Erro ao carregar tags: {e}")
-        _cache["existing_tags"] = {}
-    
-    print_flush(f"✅ Cache completo carregado!")
+    print_flush(f"✅ Cache essencial carregado! Outros caches serão populados sob demanda.")
 
     print_flush(f"🔄 Processando {len(vms)} VMs completas (VM + Interface + IP + Tags)...")
     success_count = 0
