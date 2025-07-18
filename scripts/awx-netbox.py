@@ -140,18 +140,28 @@ class SimpleAWXCollector:
         """Paginação robusta para AWX com suporte a 10000+ itens"""
         results = []
         page = 1
+        total_count = None
         
         # Adicionar page_size para AWX se não estiver presente
         if "page_size" not in url:
             separator = "&" if "?" in url else "?"
-            url = f"{url}{separator}page_size=200"
+            url = f"{url}{separator}page_size=100"  # Reduzir page_size para evitar timeouts
         
         while url:
             try:
-                print_flush(f"   └─ AWX Página {page}: coletando...")
-                r = self.session.get(url, timeout=60)
+                # Mostrar progresso apenas a cada 5 páginas
+                if page == 1 or page % 5 == 0:
+                    print_flush(f"   └─ AWX Página {page}: coletando...")
+                
+                r = self.session.get(url, timeout=120)  # Aumentar timeout
                 r.raise_for_status()
                 data = r.json()
+                
+                # Capturar total na primeira página
+                if page == 1 and "count" in data:
+                    total_count = data["count"]
+                    print_flush(f"   └─ Total esperado: {total_count} hosts")
+                
                 page_results = data.get("results", [])
                 results.extend(page_results)
                 
@@ -165,22 +175,49 @@ class SimpleAWXCollector:
                 else:
                     url = None
                     
-                print_flush(f"   └─ AWX Página {page}: +{len(page_results)} itens, total: {len(results)}")
+                # Mostrar progresso a cada 5 páginas
+                if page % 5 == 0:
+                    print_flush(f"   └─ AWX Página {page}: +{len(page_results)} itens, total: {len(results)}")
+                
                 page += 1
                 
+                # Verificar se já coletamos todos os itens esperados
+                if total_count and len(results) >= total_count:
+                    print_flush(f"   └─ Todos os {total_count} hosts coletados")
+                    break
+                    
                 # Limite de segurança
-                if page > 500:
+                if page > 1000:  # Aumentar limite
                     print_flush(f"⚠️ AWX: Limite de páginas atingido")
                     break
                     
+            except requests.exceptions.Timeout:
+                print_flush(f"⚠️ AWX Timeout na página {page} - tentando continuar...")
+                # Tentar próxima página se possível
+                if url and "page=" in url:
+                    import re
+                    page_match = re.search(r'page=(\d+)', url)
+                    if page_match:
+                        current_page = int(page_match.group(1))
+                        new_page = current_page + 1
+                        url = re.sub(r'page=\d+', f'page={new_page}', url)
+                        continue
+                break
             except requests.exceptions.RequestException as e:
                 print_flush(f"❌ AWX Erro na requisição página {page}: {e}")
                 break
             except json.JSONDecodeError as e:
                 print_flush(f"❌ AWX Erro ao decodificar JSON página {page}: {e}")
                 break
+            except Exception as e:
+                print_flush(f"❌ AWX Erro inesperado página {page}: {e}")
+                break
         
-        print_flush(f"✅ AWX: {len(results)} itens coletados em {page-1} páginas")
+        if total_count:
+            print_flush(f"✅ AWX: {len(results)}/{total_count} itens coletados em {page-1} páginas")
+        else:
+            print_flush(f"✅ AWX: {len(results)} itens coletados em {page-1} páginas")
+        
         return results
 
 # === FUNÇÕES DE REGISTRO NO NETBOX ===
@@ -188,18 +225,27 @@ def paginated_get_all(endpoint, query=""):
     """Função robusta para paginação do NetBox com suporte a grandes volumes"""
     # Usar limit menor para evitar timeouts
     base_url = f"{NETBOX_URL}/api/{endpoint}/"
-    url = f"{base_url}?limit=500{query}"
+    url = f"{base_url}?limit=200{query}"  # Reduzir limit para evitar timeouts
     results = []
     page = 1
+    total_count = None
     
     print_flush(f"🔍 Paginando {endpoint}...")
     
     while url:
         try:
-            print_flush(f"   └─ Página {page}: {len(results)} itens coletados...")
-            r = requests.get(url, headers=HEADERS, verify=False, timeout=30)
+            # Mostrar progresso apenas a cada 5 páginas para reduzir output
+            if page == 1 or page % 5 == 0:
+                print_flush(f"   └─ Página {page}: {len(results)} itens coletados...")
+            
+            r = requests.get(url, headers=HEADERS, verify=False, timeout=60)  # Aumentar timeout
             r.raise_for_status()
             data = r.json()
+            
+            # Capturar total na primeira página
+            if page == 1 and "count" in data:
+                total_count = data["count"]
+                print_flush(f"   └─ Total esperado: {total_count} itens")
             
             page_results = data.get("results", [])
             results.extend(page_results)
@@ -210,26 +256,58 @@ def paginated_get_all(endpoint, query=""):
                 # Se a URL é relativa, adicionar o base URL
                 if next_url.startswith('/'):
                     next_url = f"{NETBOX_URL}{next_url}"
+                # Garantir que não duplicamos parâmetros
+                if "limit=" not in next_url:
+                    separator = "&" if "?" in next_url else "?"
+                    next_url = f"{next_url}{separator}limit=200"
                 url = next_url
             else:
                 url = None
                 
-            print_flush(f"   └─ Página {page}: +{len(page_results)} itens, total: {len(results)}")
+            # Mostrar progresso a cada 5 páginas
+            if page % 5 == 0:
+                print_flush(f"   └─ Página {page}: +{len(page_results)} itens, total: {len(results)}")
+            
             page += 1
             
+            # Verificar se já coletamos todos os itens esperados
+            if total_count and len(results) >= total_count:
+                print_flush(f"   └─ Todos os {total_count} itens coletados")
+                break
+                
             # Limite de segurança para evitar loops infinitos
-            if page > 1000:
+            if page > 2000:  # Aumentar limite para suportar mais páginas
                 print_flush(f"⚠️ Limite de páginas atingido para {endpoint}")
                 break
                 
+        except requests.exceptions.Timeout:
+            print_flush(f"⚠️ Timeout na página {page} - tentando continuar...")
+            # Tentar próxima página se possível
+            if url and "offset=" in url:
+                # Extrair e incrementar offset manualmente
+                import re
+                offset_match = re.search(r'offset=(\d+)', url)
+                if offset_match:
+                    current_offset = int(offset_match.group(1))
+                    new_offset = current_offset + 200  # Assumindo limit=200
+                    url = re.sub(r'offset=\d+', f'offset={new_offset}', url)
+                    continue
+            break
         except requests.exceptions.RequestException as e:
             print_flush(f"❌ Erro na requisição página {page}: {e}")
             break
         except json.JSONDecodeError as e:
             print_flush(f"❌ Erro ao decodificar JSON página {page}: {e}")
             break
+        except Exception as e:
+            print_flush(f"❌ Erro inesperado página {page}: {e}")
+            break
     
-    print_flush(f"✅ {endpoint}: {len(results)} itens coletados em {page-1} páginas")
+    if total_count:
+        print_flush(f"✅ {endpoint}: {len(results)}/{total_count} itens coletados em {page-1} páginas")
+    else:
+        print_flush(f"✅ {endpoint}: {len(results)} itens coletados em {page-1} páginas")
+    
     return results
 
 def get_id_by_name(endpoint, name):
@@ -451,37 +529,54 @@ def main():
     # Pré-carregar TODOS os caches para otimizar performance com 10000+ VMs
     print_flush("📋 Carregando dados existentes do NetBox...")
     
-    # 1. Cache de VMs existentes
-    print_flush("   🖥️ Carregando VMs...")
-    _cache["existing_vms"] = {vm["name"]: vm for vm in paginated_get_all("virtualization/virtual-machines")}
-    print_flush(f"   └─ Encontradas {len(_cache['existing_vms'])} VMs no NetBox")
+    try:
+        # 1. Cache de VMs existentes
+        print_flush("   🖥️ Carregando VMs...")
+        all_vms = paginated_get_all("virtualization/virtual-machines")
+        _cache["existing_vms"] = {vm["name"]: vm for vm in all_vms}
+        print_flush(f"   └─ Encontradas {len(_cache['existing_vms'])} VMs no NetBox")
+    except Exception as e:
+        print_flush(f"❌ Erro ao carregar VMs: {e}")
+        _cache["existing_vms"] = {}
     
-    # 2. Cache de interfaces existentes (chave: vm_id_interface_name)
-    print_flush("   🔌 Carregando interfaces...")
-    all_interfaces = paginated_get_all("virtualization/interfaces")
-    _cache["existing_interfaces"] = {}
-    for interface in all_interfaces:
-        vm_id = interface.get("virtual_machine", {}).get("id")
-        if vm_id:
-            interface_key = f"{vm_id}_{interface['name']}"
-            _cache["existing_interfaces"][interface_key] = interface
-    print_flush(f"   └─ Encontradas {len(all_interfaces)} interfaces no NetBox")
+    try:
+        # 2. Cache de interfaces existentes (chave: vm_id_interface_name)
+        print_flush("   🔌 Carregando interfaces...")
+        all_interfaces = paginated_get_all("virtualization/interfaces")
+        _cache["existing_interfaces"] = {}
+        for interface in all_interfaces:
+            vm_id = interface.get("virtual_machine", {}).get("id")
+            if vm_id:
+                interface_key = f"{vm_id}_{interface['name']}"
+                _cache["existing_interfaces"][interface_key] = interface
+        print_flush(f"   └─ Encontradas {len(all_interfaces)} interfaces no NetBox")
+    except Exception as e:
+        print_flush(f"❌ Erro ao carregar interfaces: {e}")
+        _cache["existing_interfaces"] = {}
     
-    # 3. Cache de IPs existentes (chave: endereço_ip)
-    print_flush("   🌐 Carregando IPs...")
-    all_ips = paginated_get_all("ipam/ip-addresses")
-    _cache["existing_ips"] = {}
-    for ip in all_ips:
-        ip_address = ip.get("address", "").split("/")[0]  # Remove máscara para comparação
-        if ip_address:
-            _cache["existing_ips"][ip_address] = ip
-    print_flush(f"   └─ Encontrados {len(all_ips)} IPs no NetBox")
+    try:
+        # 3. Cache de IPs existentes (chave: endereço_ip)
+        print_flush("   🌐 Carregando IPs...")
+        all_ips = paginated_get_all("ipam/ip-addresses")
+        _cache["existing_ips"] = {}
+        for ip in all_ips:
+            ip_address = ip.get("address", "").split("/")[0]  # Remove máscara para comparação
+            if ip_address:
+                _cache["existing_ips"][ip_address] = ip
+        print_flush(f"   └─ Encontrados {len(all_ips)} IPs no NetBox")
+    except Exception as e:
+        print_flush(f"❌ Erro ao carregar IPs: {e}")
+        _cache["existing_ips"] = {}
     
-    # 4. Cache de tags existentes (chave: slug)
-    print_flush("   🏷️  Carregando tags...")
-    all_tags = paginated_get_all("extras/tags")
-    _cache["existing_tags"] = {tag["slug"]: tag for tag in all_tags}
-    print_flush(f"   └─ Encontradas {len(all_tags)} tags no NetBox")
+    try:
+        # 4. Cache de tags existentes (chave: slug)
+        print_flush("   🏷️  Carregando tags...")
+        all_tags = paginated_get_all("extras/tags")
+        _cache["existing_tags"] = {tag["slug"]: tag for tag in all_tags}
+        print_flush(f"   └─ Encontradas {len(all_tags)} tags no NetBox")
+    except Exception as e:
+        print_flush(f"❌ Erro ao carregar tags: {e}")
+        _cache["existing_tags"] = {}
     
     print_flush(f"✅ Cache completo carregado!")
 
@@ -489,15 +584,22 @@ def main():
     success_count = 0
     error_count = 0
     
+    # Processar em lotes para melhor controle
+    batch_size = 10
+    
     for i, vm in enumerate(vms, 1):
         try:
             vm_name = vm.get("vm_name")
             if not vm_name:
                 continue
 
-            # Mostrar progresso a cada 5 VMs
-            if i % 5 == 0 or i == len(vms):
+            # Mostrar progresso mais frequente para grandes volumes
+            if i % batch_size == 0 or i == 1 or i == len(vms):
                 print_flush(f"📝 Progresso: {i}/{len(vms)} VMs ({success_count} ok, {error_count} erros)")
+                # Pequena pausa a cada lote para evitar sobrecarga
+                if i % (batch_size * 10) == 0:
+                    import time
+                    time.sleep(1)
             
             # 1. Criar/atualizar VM
             vm_id = ensure_vm(vm)
@@ -554,9 +656,13 @@ def main():
 
             success_count += 1
 
+        except KeyboardInterrupt:
+            print_flush(f"\n⚠️ Interrompido pelo usuário. Processadas {i} VMs.")
+            break
         except Exception as e:
             error_count += 1
             print_flush(f"❌ Erro ao processar VM {vm.get('vm_name')}: {e}")
+            # Continuar com a próxima VM mesmo em caso de erro
             
     print_flush(f"🎉 Sincronização concluída! ✅ {success_count} VMs processadas, ❌ {error_count} erros")
 
