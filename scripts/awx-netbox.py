@@ -58,13 +58,14 @@ HEADERS = {
 _cache = {
     "sites": {},
     "clusters": {},
+    "device_roles": {}, # <-- NOVO: Adicionar cache para Funções de Dispositivo
     "existing_vms": None,
     "existing_interfaces": None,
     "existing_ips": None,
-    "existing_tags": None  # Adicionar cache para tags
+    "existing_tags": None
 }
 
-# === CLASSE PARA COLETA DO AWX ===
+# === CLASSE PARA COLETA DO AWX (sem alterações) ===
 class SimpleAWXCollector:
     def __init__(self):
         self.session = requests.Session()
@@ -80,7 +81,6 @@ class SimpleAWXCollector:
                 print_flush("❌ Nenhum inventário encontrado")
                 return []
 
-            # Procurar apenas o inventário "VMware Inventory"
             vmware_inv = None
             for inv in invs:
                 if inv["name"] == "VMware Inventory":
@@ -105,7 +105,6 @@ class SimpleAWXCollector:
                 all_hosts = []
                 for host in hosts_raw:
                     try:
-                        # Processar variáveis - pode vir como string JSON
                         vars_raw = host.get("variables", "{}")
                         if isinstance(vars_raw, str):
                             vars = json.loads(vars_raw)
@@ -122,7 +121,7 @@ class SimpleAWXCollector:
                     vars["vm_cpu_count"] = vars.get("vm_cpu_count", 1)
                     vars["vm_memory_mb"] = vars.get("vm_memory_mb", 0)
                     vars["vm_disk_total_gb"] = vars.get("vm_disk_total_gb", 0)
-                    vars["vm_tags"] = vars.get("vm_tags", [])  # Adicionar tags
+                    vars["vm_tags"] = vars.get("vm_tags", [])
                     all_hosts.append(vars)
                     
             except Exception as e:
@@ -137,27 +136,23 @@ class SimpleAWXCollector:
             raise
 
     def _paginated_get(self, url):
-        """Paginação robusta para AWX com suporte a 10000+ itens"""
         results = []
         page = 1
         total_count = None
         
-        # Adicionar page_size para AWX se não estiver presente
         if "page_size" not in url:
             separator = "&" if "?" in url else "?"
-            url = f"{url}{separator}page_size=100"  # Reduzir page_size para evitar timeouts
+            url = f"{url}{separator}page_size=100"
         
         while url:
             try:
-                # Mostrar progresso apenas a cada 5 páginas
                 if page == 1 or page % 5 == 0:
                     print_flush(f"   └─ AWX Página {page}: coletando...")
                 
-                r = self.session.get(url, timeout=120)  # Aumentar timeout
+                r = self.session.get(url, timeout=120)
                 r.raise_for_status()
                 data = r.json()
                 
-                # Capturar total na primeira página
                 if page == 1 and "count" in data:
                     total_count = data["count"]
                     print_flush(f"   └─ Total esperado: {total_count} hosts")
@@ -165,35 +160,29 @@ class SimpleAWXCollector:
                 page_results = data.get("results", [])
                 results.extend(page_results)
                 
-                # Processar URL da próxima página
                 next_url = data.get("next")
                 if next_url:
-                    # Se a URL é relativa, adicionar o base URL
                     if next_url.startswith('/'):
                         next_url = f"{AWX_URL}{next_url}"
                     url = next_url
                 else:
                     url = None
                     
-                # Mostrar progresso a cada 5 páginas
                 if page % 5 == 0:
                     print_flush(f"   └─ AWX Página {page}: +{len(page_results)} itens, total: {len(results)}")
                 
                 page += 1
                 
-                # Verificar se já coletamos todos os itens esperados
                 if total_count and len(results) >= total_count:
                     print_flush(f"   └─ Todos os {total_count} hosts coletados")
                     break
                     
-                # Limite de segurança
-                if page > 1000:  # Aumentar limite
+                if page > 1000:
                     print_flush(f"⚠️ AWX: Limite de páginas atingido")
                     break
                     
             except requests.exceptions.Timeout:
                 print_flush(f"⚠️ AWX Timeout na página {page} - tentando continuar...")
-                # Tentar próxima página se possível
                 if url and "page=" in url:
                     import re
                     page_match = re.search(r'page=(\d+)', url)
@@ -221,11 +210,55 @@ class SimpleAWXCollector:
         return results
 
 # === FUNÇÕES DE REGISTRO NO NETBOX ===
+
+# --- INÍCIO DA NOVA FUNÇÃO ---
+def ensure_device_role(role_name):
+    """Garante que uma Função de Dispositivo exista no NetBox, usando cache."""
+    if not role_name:
+        return None
+
+    # Verificar no cache primeiro
+    if role_name in _cache["device_roles"]:
+        return _cache["device_roles"][role_name]
+
+    # Se não está no cache, buscar na API
+    try:
+        url_get = f"{NETBOX_URL}/api/dcim/device-roles/?name={role_name}"
+        response = requests.get(url_get, headers=HEADERS, verify=False, timeout=30)
+        response.raise_for_status()
+        resultados = response.json().get('results', [])
+
+        if resultados:
+            role_id = resultados[0]['id']
+            print_flush(f"   ✅ Função '{role_name}' já existe. ID: {role_id}")
+            _cache["device_roles"][role_name] = role_id # Adicionar ao cache
+            return role_id
+        else:
+            # Se não existe, criar uma nova
+            print_flush(f"   ⚠️  Função '{role_name}' não encontrada. A criar...")
+            url_post = f"{NETBOX_URL}/api/dcim/device-roles/"
+            payload = {
+                "name": role_name,
+                "slug": role_name.lower().replace(' ', '-').replace('ç', 'c').replace('ã', 'a'),
+                "color": "00bcd4",
+                "vm_role": True # Importante para associar a VMs
+            }
+            response_post = requests.post(url_post, headers=HEADERS, json=payload, verify=False, timeout=30)
+            response_post.raise_for_status()
+            nova_funcao = response_post.json()
+            role_id = nova_funcao['id']
+            print_flush(f"   ✅ Função '{role_name}' criada com sucesso. ID: {role_id}")
+            _cache["device_roles"][role_name] = role_id # Adicionar ao cache
+            return role_id
+
+    except requests.exceptions.RequestException as e:
+        print_flush(f"   ❌ Erro ao comunicar com NetBox para gerir a função: {e}")
+        return None
+# --- FIM DA NOVA FUNÇÃO ---
+
 def paginated_get_all(endpoint, query=""):
-    """Função robusta para paginação do NetBox com suporte a grandes volumes"""
-    # Usar limit menor para evitar timeouts
     base_url = f"{NETBOX_URL}/api/{endpoint}/"
-    url = f"{base_url}?limit=200{query}"  # Reduzir limit para evitar timeouts
+    url = f"{base_url}?limit=200{query}"
     results = []
     page = 1
     total_count = None
@@ -234,15 +267,13 @@ def paginated_get_all(endpoint, query=""):
     
     while url:
         try:
-            # Mostrar progresso apenas a cada 5 páginas para reduzir output
             if page == 1 or page % 5 == 0:
                 print_flush(f"   └─ Página {page}: {len(results)} itens coletados...")
             
-            r = requests.get(url, headers=HEADERS, verify=False, timeout=60)  # Aumentar timeout
+            r = requests.get(url, headers=HEADERS, verify=False, timeout=60)
             r.raise_for_status()
             data = r.json()
             
-            # Capturar total na primeira página
             if page == 1 and "count" in data:
                 total_count = data["count"]
                 print_flush(f"   └─ Total esperado: {total_count} itens")
@@ -250,13 +281,10 @@ def paginated_get_all(endpoint, query=""):
             page_results = data.get("results", [])
             results.extend(page_results)
             
-            # Processar próxima URL
             next_url = data.get("next")
             if next_url:
-                # Se a URL é relativa, adicionar o base URL
                 if next_url.startswith('/'):
                     next_url = f"{NETBOX_URL}{next_url}"
-                # Garantir que não duplicamos parâmetros
                 if "limit=" not in next_url:
                     separator = "&" if "?" in next_url else "?"
                     next_url = f"{next_url}{separator}limit=200"
@@ -264,32 +292,27 @@ def paginated_get_all(endpoint, query=""):
             else:
                 url = None
                 
-            # Mostrar progresso a cada 5 páginas
             if page % 5 == 0:
                 print_flush(f"   └─ Página {page}: +{len(page_results)} itens, total: {len(results)}")
             
             page += 1
             
-            # Verificar se já coletamos todos os itens esperados
             if total_count and len(results) >= total_count:
                 print_flush(f"   └─ Todos os {total_count} itens coletados")
                 break
                 
-            # Limite de segurança para evitar loops infinitos
-            if page > 2000:  # Aumentar limite para suportar mais páginas
+            if page > 2000:
                 print_flush(f"⚠️ Limite de páginas atingido para {endpoint}")
                 break
                 
         except requests.exceptions.Timeout:
             print_flush(f"⚠️ Timeout na página {page} - tentando continuar...")
-            # Tentar próxima página se possível
             if url and "offset=" in url:
-                # Extrair e incrementar offset manualmente
                 import re
                 offset_match = re.search(r'offset=(\d+)', url)
                 if offset_match:
                     current_offset = int(offset_match.group(1))
-                    new_offset = current_offset + 200  # Assumindo limit=200
+                    new_offset = current_offset + 200
                     url = re.sub(r'offset=\d+', f'offset={new_offset}', url)
                     continue
             break
@@ -311,7 +334,6 @@ def paginated_get_all(endpoint, query=""):
     return results
 
 def get_id_by_name(endpoint, name):
-    # Usar cache para sites e clusters
     if endpoint == "dcim/sites":
         if name not in _cache["sites"]:
             entries = paginated_get_all(endpoint, f"&name={name}")
@@ -326,7 +348,6 @@ def get_id_by_name(endpoint, name):
                 _cache["clusters"][item["name"]] = item["id"]
         return _cache["clusters"].get(name)
     
-    # Fallback para outros endpoints
     entries = paginated_get_all(endpoint, f"&name={name}")
     for item in entries:
         if item["name"] == name:
@@ -334,35 +355,21 @@ def get_id_by_name(endpoint, name):
     return None
 
 def ensure_tag(tag_name, tag_category, tag_description=""):
-    """Criar ou obter tag usando cache para performance"""
-    # Criar slug da tag - mantém categoria para unicidade
     tag_slug = f"{tag_category}-{tag_name}".lower()
-    # Remover caracteres especiais
-    replacements = {
-        " ": "-", "ã": "a", "ç": "c", "á": "a", "é": "e", 
-        "í": "i", "ó": "o", "ú": "u", "â": "a", "ê": "e",
-        "ô": "o", "à": "a", "õ": "o"
-    }
+    replacements = { " ": "-", "ã": "a", "ç": "c", "á": "a", "é": "e", "í": "i", "ó": "o", "ú": "u", "â": "a", "ê": "e", "ô": "o", "à": "a", "õ": "o" }
     for old, new in replacements.items():
         tag_slug = tag_slug.replace(old, new)
     
-    # Verificar no cache primeiro
     if tag_slug in _cache["existing_tags"]:
         return _cache["existing_tags"][tag_slug]["id"]
     
-    # Se não está no cache, criar nova tag
-    tag_data = {
-        "name": tag_name,  # Apenas o nome, sem a categoria
-        "slug": tag_slug,  # Slug mantém categoria para evitar conflitos
-        "description": tag_description if tag_description else f"Categoria: {tag_category}"
-    }
+    tag_data = { "name": tag_name, "slug": tag_slug, "description": tag_description if tag_description else f"Categoria: {tag_category}" }
     
     try:
         r = requests.post(f"{NETBOX_URL}/api/extras/tags/", headers=HEADERS, data=json.dumps(tag_data), verify=False, timeout=30)
         if r.status_code in [200, 201]:
             created_tag = r.json()
             tag_id = created_tag["id"]
-            # Adicionar ao cache
             _cache["existing_tags"][tag_slug] = created_tag
             print_flush(f"   🏷️ Tag criada: {tag_name}")
             return tag_id
@@ -373,13 +380,12 @@ def ensure_tag(tag_name, tag_category, tag_description=""):
         print_flush(f"❌ Erro ao criar tag {tag_name}: {e}")
         return None
 
-def ensure_vm(vm):
+def ensure_vm(vm, role_id): # <-- ALTERADO: Adicionar role_id como parâmetro
     name = vm.get("vm_name")
 
     site_id = get_id_by_name("dcim/sites", FORCE_SITE)
     cluster_id = get_id_by_name("virtualization/clusters", vm.get("vm_cluster"))
 
-    # Determinar status baseado no power state
     vm_power_state = vm.get("vm_power_state", "")
     status = "offline" if vm_power_state == "poweredOff" else "active"
 
@@ -394,7 +400,12 @@ def ensure_vm(vm):
         "comments": f"Atualizado via AWX em {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
     }
 
-    # Usar cache de VMs existentes
+    # --- INÍCIO DA ALTERAÇÃO ---
+    # Adicionar o role (Função) ao payload se um ID foi fornecido
+    if role_id:
+        payload['role'] = role_id
+    # --- FIM DA ALTERAÇÃO ---
+
     existing_vm = _cache["existing_vms"].get(name)
     if existing_vm:
         vm_id = existing_vm["id"]
@@ -404,7 +415,6 @@ def ensure_vm(vm):
         r = requests.post(f"{NETBOX_URL}/api/virtualization/virtual-machines/", headers=HEADERS, data=json.dumps(payload), verify=False)
         if r.status_code in [200, 201]:
             vm_id = r.json()["id"]
-            # Adicionar ao cache
             _cache["existing_vms"][name] = {"id": vm_id, "name": name}
             print_flush(f"✅ VM criada: {name}")
         else:
@@ -414,18 +424,14 @@ def ensure_vm(vm):
     return vm_id
 
 def update_vm_tags(vm_id, tag_ids):
-    """Atualizar tags de uma VM preservando tags existentes"""
     try:
-        # Buscar VM para obter tags atuais
         r = requests.get(f"{NETBOX_URL}/api/virtualization/virtual-machines/{vm_id}/", headers=HEADERS, verify=False, timeout=30)
         if r.status_code == 200:
             vm_data = r.json()
             existing_tag_ids = [tag["id"] for tag in vm_data.get("tags", [])]
             
-            # Combinar tags existentes com as novas
             all_tag_ids = list(set(existing_tag_ids + tag_ids))
             
-            # Atualizar VM com todas as tags
             update_data = {"tags": all_tag_ids}
             
             r_update = requests.patch(f"{NETBOX_URL}/api/virtualization/virtual-machines/{vm_id}/", 
@@ -442,24 +448,16 @@ def update_vm_tags(vm_id, tag_ids):
         return False
 
 def ensure_interface(vm_id, name):
-    """Criar/verificar interface usando cache para performance"""
-    # Usar cache de interfaces existentes
     interface_key = f"{vm_id}_{name}"
     if interface_key in _cache["existing_interfaces"]:
         return _cache["existing_interfaces"][interface_key]["id"]
 
-    # Se não existe no cache, criar nova interface
-    payload = {
-        "name": name,
-        "virtual_machine": vm_id,
-        "type": INTERFACE_TYPE
-    }
+    payload = { "name": name, "virtual_machine": vm_id, "type": INTERFACE_TYPE }
     try:
         r = requests.post(f"{NETBOX_URL}/api/virtualization/interfaces/", headers=HEADERS, data=json.dumps(payload), verify=False, timeout=30)
         if r.status_code in [200, 201]:
             interface_data = r.json()
             interface_id = interface_data["id"]
-            # Adicionar ao cache
             _cache["existing_interfaces"][interface_key] = interface_data
             return interface_id
         else:
@@ -470,16 +468,12 @@ def ensure_interface(vm_id, name):
         return None
 
 def ensure_ip(ip_str, interface_id):
-    """Criar/verificar IP usando cache para performance"""
-    # Extrair apenas o IP sem máscara para comparação
     ip_only = ip_str.split("/")[0]
     
-    # Usar cache de IPs existentes (buscar por IP sem máscara)
     if ip_only in _cache["existing_ips"]:
         ip_data = _cache["existing_ips"][ip_only]
         ip_id = ip_data["id"]
         
-        # Verificar se precisa atualizar a associação
         current_interface = ip_data.get("assigned_object_id")
         if current_interface != interface_id:
             try:
@@ -487,26 +481,18 @@ def ensure_ip(ip_str, interface_id):
                     "assigned_object_type": "virtualization.vminterface",
                     "assigned_object_id": interface_id
                 }), verify=False, timeout=30)
-                # Atualizar cache
                 _cache["existing_ips"][ip_only]["assigned_object_id"] = interface_id
             except Exception as e:
                 print_flush(f"❌ Erro ao atualizar associação do IP {ip_str}: {e}")
         
         return ip_id
 
-    # Se não existe no cache, criar novo IP
-    payload = {
-        "address": ip_str,
-        "status": "active",
-        "assigned_object_type": "virtualization.vminterface",
-        "assigned_object_id": interface_id
-    }
+    payload = { "address": ip_str, "status": "active", "assigned_object_type": "virtualization.vminterface", "assigned_object_id": interface_id }
     try:
         r = requests.post(f"{NETBOX_URL}/api/ipam/ip-addresses/", headers=HEADERS, data=json.dumps(payload), verify=False, timeout=30)
         if r.status_code in [200, 201]:
             ip_data = r.json()
             ip_id = ip_data["id"]
-            # Adicionar ao cache (usar IP sem máscara como chave)
             _cache["existing_ips"][ip_only] = ip_data
             return ip_id
         else:
@@ -526,11 +512,9 @@ def main():
     collector = SimpleAWXCollector()
     vms = collector.list_hosts()
 
-    # Carregar apenas cache essencial de VMs para otimizar
     print_flush("📋 Carregando cache essencial do NetBox...")
     
     try:
-        # 1. Cache de VMs existentes (essencial)
         print_flush("   🖥️ Carregando VMs...")
         all_vms = paginated_get_all("virtualization/virtual-machines")
         _cache["existing_vms"] = {vm["name"]: vm for vm in all_vms}
@@ -539,18 +523,16 @@ def main():
         print_flush(f"❌ Erro ao carregar VMs: {e}")
         _cache["existing_vms"] = {}
     
-    # Inicializar outros caches vazios (serão populados sob demanda)
     _cache["existing_interfaces"] = {}
     _cache["existing_ips"] = {}
     _cache["existing_tags"] = {}
     
     print_flush(f"✅ Cache essencial carregado! Outros caches serão populados sob demanda.")
 
-    print_flush(f"🔄 Processando {len(vms)} VMs completas (VM + Interface + IP + Tags)...")
+    print_flush(f"🔄 Processando {len(vms)} VMs completas (VM + Interface + IP + Tags + Função)...")
     success_count = 0
     error_count = 0
     
-    # Processar em lotes para melhor controle
     batch_size = 10
     
     for i, vm in enumerate(vms, 1):
@@ -559,25 +541,36 @@ def main():
             if not vm_name:
                 continue
 
-            # Mostrar progresso mais frequente para grandes volumes
             if i % batch_size == 0 or i == 1 or i == len(vms):
                 print_flush(f"📝 Progresso: {i}/{len(vms)} VMs ({success_count} ok, {error_count} erros)")
-                # Pequena pausa a cada lote para evitar sobrecarga
                 if i % (batch_size * 10) == 0:
                     import time
                     time.sleep(1)
             
-            # 1. Criar/atualizar VM
-            vm_id = ensure_vm(vm)
+            # --- INÍCIO DA NOVA LÓGICA ---
+            # 1. Extrair e garantir a Função de Dispositivo a partir das tags
+            vm_tags_list = vm.get("vm_tags", [])
+            role_name = None
+            if vm_tags_list:
+                for tag in vm_tags_list:
+                    if tag.get('category') == 'Função':
+                        role_name = tag.get('name')
+                        break
+            
+            # Garante que a função exista no NetBox e obtém o seu ID
+            role_id = ensure_device_role(role_name)
+            # --- FIM DA NOVA LÓGICA ---
+
+            # 2. Criar/atualizar VM, passando o role_id
+            vm_id = ensure_vm(vm, role_id) # <-- ALTERADO
             if not vm_id:
                 error_count += 1
                 continue
 
-            # 2. Processar tags da VM
-            vm_tags = vm.get("vm_tags", [])
-            if vm_tags:
+            # 3. Processar tags da VM (lógica existente)
+            if vm_tags_list:
                 tag_ids = []
-                for tag in vm_tags:
+                for tag in vm_tags_list:
                     tag_name = tag.get("name", "")
                     tag_category = tag.get("category", "")
                     tag_description = tag.get("description", "")
@@ -590,22 +583,20 @@ def main():
                 if tag_ids:
                     update_vm_tags(vm_id, tag_ids)
 
-            # 3. Criar/atualizar interface eth0
+            # 4. Criar/atualizar interface eth0 (lógica existente)
             interface_id = ensure_interface(vm_id, "eth0")
             if not interface_id:
                 print_flush(f"⚠️ Falha ao criar interface para VM {vm_name}")
                 error_count += 1
                 continue
 
-            # 4. Processar IPs da VM
+            # 5. Processar IPs da VM (lógica existente)
             vm_ips = vm.get("vm_ip_addresses", [])
             primary_ip_id = None
             
             if vm_ips:
-                # Usar o primeiro IP como primário
                 primary_ip = vm_ips[0]
                 if primary_ip and primary_ip != "":
-                    # Adicionar /32 se não tiver máscara
                     if "/" not in primary_ip:
                         primary_ip = f"{primary_ip}/32"
                     
@@ -615,7 +606,7 @@ def main():
                     else:
                         print_flush(f"⚠️ Falha ao associar IP {primary_ip} à VM {vm_name}")
 
-            # 5. Definir IP primário na VM
+            # 6. Definir IP primário na VM (lógica existente)
             if primary_ip_id:
                 update_primary_ip(vm_id, primary_ip_id)
                 print_flush(f"🎯 IP primário definido para VM {vm_name}")
@@ -628,7 +619,6 @@ def main():
         except Exception as e:
             error_count += 1
             print_flush(f"❌ Erro ao processar VM {vm.get('vm_name')}: {e}")
-            # Continuar com a próxima VM mesmo em caso de erro
             
     print_flush(f"🎉 Sincronização concluída! ✅ {success_count} VMs processadas, ❌ {error_count} erros")
 
