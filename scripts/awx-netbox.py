@@ -24,12 +24,17 @@ AWX_PASSWORD = os.getenv("AWX_PASSWORD")
 NETBOX_URL = os.getenv("NETBOX_URL") or os.getenv("NETBOX_API")
 NETBOX_TOKEN = os.getenv("NETBOX_TOKEN")
 
-# --- INÍCIO DA ALTERAÇÃO ---
+# --- INÍCIO DAS NOVAS ALTERAÇÕES ---
 # Mapeamento de Datacenter (AWX) para Site (NetBox)
 DATACENTER_TO_SITE_MAP = {
     "ATI-SLC-HCI": "ETIPI - Prédio Sede"
 }
-# --- FIM DA ALTERAÇÃO ---
+
+# Mapeamento de Cluster (AWX) para Cluster (NetBox)
+CLUSTER_MAP = {
+    "Cluster vSAN": "Cluster-ATI-PI-02"
+}
+# --- FIM DAS NOVAS ALTERAÇÕES ---
 
 # Verificar se as variáveis necessárias estão definidas
 if not AWX_USER:
@@ -121,9 +126,11 @@ class SimpleAWXCollector:
                         print_flush(f"⚠️ Ignorando host {host['name']} - variáveis inválidas")
                         continue
 
-                    # Adiciona vm_datacenter se não existir, para consistência
+                    # Adiciona valores padrão se ausentes, para consistência
                     if "vm_datacenter" not in vars_dict:
-                        vars_dict["vm_datacenter"] = "ATI-SLC-HCI" # Valor padrão se ausente
+                        vars_dict["vm_datacenter"] = "ATI-SLC-HCI"
+                    if "vm_cluster" not in vars_dict:
+                        vars_dict["vm_cluster"] = "Cluster vSAN"
 
                     all_hosts.append(vars_dict)
 
@@ -212,9 +219,8 @@ class SimpleAWXCollector:
 
         return results
 
-# === FUNÇÕES DE REGISTRO NO NETBOX ===
+# === FUNÇÕES DE REGISTRO NO NETBOX (sem alterações) ===
 
-# --- INÍCIO DE NOVAS FUNÇÕES E ALTERAÇÕES ---
 def slugify(text):
     """Gera um slug simples a partir de um texto."""
     if not text:
@@ -393,7 +399,6 @@ def ensure_vm(vm, role_id, site_id, cluster_id):
             return None
 
     return vm_id
-# --- FIM DAS NOVAS FUNÇÕES E ALTERAÇÕES ---
 
 def paginated_get_all(endpoint, query=""):
     base_url = f"{NETBOX_URL}/api/{endpoint}/"
@@ -619,14 +624,15 @@ def main():
                     import time
                     time.sleep(1)
 
-            # --- INÍCIO DA NOVA LÓGICA DE MAPEAMENTO ---
+            # --- INÍCIO DA LÓGICA DE MAPEAMENTO ---
             # 1. Aplicar mapeamento de Datacenter para Site
             datacenter_original = vm.get("vm_datacenter")
             nome_do_site = DATACENTER_TO_SITE_MAP.get(datacenter_original, datacenter_original)
             site_id = ensure_site(nome_do_site)
 
-            # 2. Garantir o Cluster
-            nome_do_cluster = vm.get("vm_cluster")
+            # 2. Aplicar mapeamento de Cluster
+            cluster_original = vm.get("vm_cluster")
+            nome_do_cluster = CLUSTER_MAP.get(cluster_original, cluster_original) # <-- ALTERAÇÃO
             cluster_id = ensure_cluster(nome_do_cluster, site_id)
 
             # 3. Extrair e garantir a Função de Dispositivo
@@ -638,7 +644,7 @@ def main():
                         role_name = tag.get('name')
                         break
             role_id = ensure_device_role(role_name)
-            # --- FIM DA NOVA LÓGICA DE MAPEAMENTO ---
+            # --- FIM DA LÓGICA DE MAPEAMENTO ---
 
             # 4. Criar/atualizar VM, passando todos os IDs necessários
             vm_id = ensure_vm(vm, role_id, site_id, cluster_id)
