@@ -50,11 +50,10 @@ _cache = {}
 # --- FUNÇÕES DE COLETA E UTILIDADES OTIMIZADAS ---
 
 def _paginated_get(session, base_url, endpoint, params=None):
-    """Coleta todos os resultados de um endpoint paginado."""
+    """Coleta todos os resultados de um endpoint paginado, tratando URLs relativas."""
     results = []
-    url = f"{base_url}/api/{endpoint}/?limit=500" # Page size maior
-    if params:
-        url += f"&{requests.compat.urlencode(params)}"
+    param_str = f"&{requests.compat.urlencode(params)}" if params else ""
+    url = f"{base_url}/api/{endpoint}/?limit=500{param_str}"
     
     while url:
         try:
@@ -62,10 +61,19 @@ def _paginated_get(session, base_url, endpoint, params=None):
             r.raise_for_status()
             data = r.json()
             results.extend(data.get("results", []))
-            url = data.get("next")
+            
+            # --- CORREÇÃO APLICADA AQUI ---
+            next_url = data.get("next")
+            if next_url and next_url.startswith('/'):
+                # A URL é relativa (ex: /api/v2/...). Prepend o base_url.
+                url = f"{base_url}{next_url}"
+            else:
+                # A URL já é completa ou é None (fim da paginação).
+                url = next_url
+                
         except requests.exceptions.RequestException as e:
             print_flush(f"ERRO: Falha ao coletar dados de {endpoint}: {e}")
-            return [] # Retorna lista vazia em caso de falha
+            return []
     return results
 
 def list_awx_hosts():
@@ -232,8 +240,7 @@ def main():
             interface_id = existing_interfaces[(vm_id, interface_name)]['id']
         else:
             interfaces_to_create.append({"name": interface_name, "virtual_machine": vm_id, "type": "1000base-t"})
-            # Nota: para simplificar, assumimos que a interface será criada na próxima execução ou precisa de um passo intermediário
-            continue # Pula o processamento de IP se a interface é nova
+            continue 
 
         # IPs
         ip_address_str = vm_data.get("vm_ip_addresses", [None])[0]
@@ -242,15 +249,9 @@ def main():
             if ip_with_mask not in existing_ips:
                 ips_to_create.append({"address": ip_with_mask, "status": "active", "assigned_object_type": "virtualization.vminterface", "assigned_object_id": interface_id})
             
-            # Preparar atualização de IP primário (sempre tenta definir)
-            # Precisamos do ID do IP, que pode ainda não existir, isso é complexo. Simplificação:
             if ip_with_mask in existing_ips and _cache['vms'][vm_name].get('primary_ip4', {}).get('id') != existing_ips[ip_with_mask]['id']:
                  primary_ips_to_update.append({"id": vm_id, "primary_ip4": existing_ips[ip_with_mask]['id']})
 
-    # Executar lotes de interface e IP
-    # Nota: A criação de interfaces e a posterior associação de IPs em um único fluxo otimizado é complexa.
-    # O ideal é rodar o script uma segunda vez para que as interfaces criadas sejam associadas.
-    # Esta versão cria as interfaces e os IPs, mas a associação do IP primário pode precisar de uma segunda execução.
     bulk_api_call("virtualization/interfaces", interfaces_to_create, 'post')
     bulk_api_call("ipam/ip-addresses", ips_to_create, 'post')
     bulk_api_call("virtualization/virtual-machines", primary_ips_to_update, 'patch')
