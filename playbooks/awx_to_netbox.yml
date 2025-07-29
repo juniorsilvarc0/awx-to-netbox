@@ -1,22 +1,17 @@
 ---
-- name: Executar sincronizacao AWX para NetBox via script Python
+- name: Executar sincronizacao AWX para NetBox
   hosts: localhost
   gather_facts: false
 
   tasks:
     - name: Debug variaveis
-      ansible.builtin.shell: |
-        echo "=== DEBUG VARIAVEIS ==="
-        echo "AWX_USERNAME: ${AWX_USERNAME:-NAO_DEFINIDO}"
+      shell: |
+        echo "AWX_USERNAME: $AWX_USERNAME"
         echo "AWX_PASSWORD: ${AWX_PASSWORD:+DEFINIDO}"
-        echo "NETBOX_API: ${NETBOX_API:-NAO_DEFINIDO}"
-        echo "NETBOX_URL: ${NETBOX_URL:-NAO_DEFINIDO}"
+        echo "NETBOX_API: $NETBOX_API"
         echo "NETBOX_TOKEN: ${NETBOX_TOKEN:+DEFINIDO}"
-        echo "=== DEBUG URL ==="
-        echo "Tamanho NETBOX_API: ${#NETBOX_API}"
-        env | grep NETBOX || echo "Nenhuma variavel NETBOX encontrada"
-      args:
-        chdir: "{{ ansible_env.ANSIBLE_PROJECT_DIR | default('.') }}"
+        echo "Diretorio atual: $(pwd)"
+        ls -la
       register: debug_result
 
     - name: Mostrar debug
@@ -24,16 +19,13 @@
         var: debug_result.stdout_lines
 
     - name: Executar script Python
-      ansible.builtin.shell: |
-        echo "Executando script Python..."
-        cd ..
+      shell: |
+        cd /runner/project
         python3 -u scripts/awx-netbox.py
-      args:
-        chdir: "{{ ansible_env.ANSIBLE_PROJECT_DIR | default('.') }}"
       register: script_result
       failed_when: false
 
-    - name: Mostrar resultado do script
+    - name: Mostrar resultado
       debug:
         msg: |
           Return code: {{ script_result.rc }}
