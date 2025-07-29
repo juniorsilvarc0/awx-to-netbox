@@ -102,6 +102,7 @@ def slugify(text):
 
 def get_or_create_dependency(endpoint, name, extra_payload={}):
     """Garantir a existência de um objeto de dependência (site, role, etc) usando cache."""
+    if not name: return None # Não processar nomes vazios
     cache_key = f"dep_{endpoint}"
     if cache_key not in _cache:
         _cache[cache_key] = {item['name']: item for item in _paginated_get(netbox_session, NETBOX_URL, endpoint)}
@@ -144,23 +145,18 @@ def bulk_api_call(endpoint, object_list, operation='post'):
             if response.status_code != 204:
                  created_objects.extend(response.json())
         except requests.exceptions.RequestException as e:
-            # --- SEÇÃO DE LOG MELHORADA ---
             print_flush(f"ERRO: Falha no lote de {action_str} para {endpoint}.")
             if e.response:
                 print_flush(f"      Status Code: {e.response.status_code}")
                 try:
-                    # Imprime a mensagem de erro detalhada que o NetBox envia
                     print_flush(f"      Detalhes do Erro NetBox: {json.dumps(e.response.json(), indent=2, ensure_ascii=False)}")
                 except json.JSONDecodeError:
                     print_flush(f"      Resposta Bruta (não JSON): {e.response.text}")
             else:
                 print_flush(f"      Erro de Conexão: {e}")
-            
-            # Imprime o lote de dados exato que causou a falha
             print_flush("      --- Lote de Dados com Falha ---")
             print_flush(json.dumps(batch, indent=2, ensure_ascii=False))
             print_flush("      --- Fim do Lote de Dados ---")
-            # --- FIM DA SEÇÃO MELHORADA ---
 
     return created_objects
 
@@ -194,12 +190,13 @@ def main():
         
         tag_ids = []
         for tag in vm_data.get("vm_tags", []):
-            tag_slug = slugify(f"{tag.get('category', '')}-{tag.get('name', '')}")
-            if tag_slug not in _cache['tags']:
-                tag_id = get_or_create_dependency("extras/tags", tag.get('name', ''), {"description": tag.get('description', ''), "slug": tag_slug})
-                if tag_id: _cache['tags'][tag_slug] = {'id': tag_id} # Atualiza cache
-            if tag_slug in _cache['tags']:
-                tag_ids.append(_cache['tags'][tag_slug]['id'])
+            if tag.get('name') and tag.get('category'):
+                tag_slug = slugify(f"{tag.get('category')}-{tag.get('name')}")
+                if tag_slug not in _cache['tags']:
+                    tag_id = get_or_create_dependency("extras/tags", tag.get('name'), {"description": tag.get('description', ''), "slug": tag_slug})
+                    if tag_id: _cache['tags'][tag_slug] = {'id': tag_id, 'slug': tag_slug}
+                if tag_slug in _cache['tags']:
+                    tag_ids.append(_cache['tags'][tag_slug]['id'])
                 
         payload = {
             "name": vm_name, "status": "active" if vm_data.get("vm_power_state") != "poweredOff" else "offline",
@@ -240,22 +237,24 @@ def main():
             interfaces_to_create.append({"name": interface_name, "virtual_machine": vm_id, "type": "1000base-t"})
             continue 
 
-        # --- CORREÇÃO APLICADA AQUI ---
         ip_addresses = vm_data.get("vm_ip_addresses", [])
-        if not ip_addresses:
-            # Pula para a próxima VM se não houver IPs para processar
-            continue
+        if not ip_addresses: continue
 
         ip_address_str = ip_addresses[0]
-        # --- FIM DA CORREÇÃO ---
         
         if ip_address_str:
             ip_with_mask = f"{ip_address_str}/32" if "/" not in ip_address_str else ip_address_str
             if ip_with_mask not in existing_ips:
                 ips_to_create.append({"address": ip_with_mask, "status": "active", "assigned_object_type": "virtualization.vminterface", "assigned_object_id": interface_id})
             
-            if ip_with_mask in existing_ips and _cache['vms'][vm_name].get('primary_ip4', {}).get('id') != existing_ips[ip_with_mask]['id']:
-                 primary_ips_to_update.append({"id": vm_id, "primary_ip4": existing_ips[ip_with_mask]['id']})
+            # --- CORREÇÃO APLICADA AQUI ---
+            if ip_with_mask in existing_ips:
+                primary_ip_info = _cache['vms'][vm_name].get('primary_ip4') # Pode ser None
+                existing_primary_ip_id = primary_ip_info.get('id') if primary_ip_info else None
+                
+                if existing_primary_ip_id != existing_ips[ip_with_mask]['id']:
+                     primary_ips_to_update.append({"id": vm_id, "primary_ip4": existing_ips[ip_with_mask]['id']})
+            # --- FIM DA CORREÇÃO ---
 
     bulk_api_call("virtualization/interfaces", interfaces_to_create, 'post')
     bulk_api_call("ipam/ip-addresses", ips_to_create, 'post')
