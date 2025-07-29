@@ -1,24 +1,22 @@
----
-- name: 'Debug de variáveis de ambiente (CORRIGIDO)'
+- name: Executar sincronizacao AWX para NetBox
   hosts: localhost
   gather_facts: false
+
   tasks:
-    - name: Mostra as variáveis injetadas pelo AWX
-      shell: |
-        echo "========================================="
-        echo "===       VARIAVEIS DO NETBOX       ==="
-        echo "========================================="
-        env | grep NETBOX || echo ">>> Nenhuma variável NETBOX encontrada."
-        echo ""
-        echo "NETBOX_API (URL do Host): [{{ lookup('env', 'NETBOX_API') }}]"
-        echo "NETBOX_TOKEN presente: [{{ 'Sim' if lookup('env', 'NETBOX_TOKEN') else 'Não' }}]"
-        echo ""
-        echo "========================================="
-        echo "===        VARIAVEIS DO AWX         ==="
-        echo "========================================="
-        env | grep AWX || echo ">>> Nenhuma variável AWX encontrada."
-        echo ""
-        echo "AWX_USERNAME: [{{ lookup('env', 'AWX_USERNAME') }}]"
-        echo "AWX_PASSWORD presente: [{{ 'Sim' if lookup('env', 'AWX_PASSWORD') else 'Não' }}]"
-        echo ""
-        echo "========================================="
+    - name: Executar o script de sincronizacao (awx-netbox.py)
+      ansible.builtin.command:
+        cmd: python3 -u scripts/awx-netbox.py
+        chdir: /runner/project
+      register: script_result
+      failed_when: script_result.rc != 0
+
+    - name: Mostrar resultado da execucao
+      ansible.builtin.debug:
+        msg:
+          - "Status: {{ 'Sucesso' if script_result.rc == 0 else 'Falha' }}"
+          - "Return Code: {{ script_result.rc }}"
+          - "Saida (STDOUT):"
+          - "{{ script_result.stdout }}"
+          - "Erros (STDERR):"
+          - "{{ script_result.stderr }}"
+      always: true
