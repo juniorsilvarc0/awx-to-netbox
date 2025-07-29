@@ -159,7 +159,8 @@ class SimpleAWXCollector:
                 if page == 1 or page % 5 == 0:
                     print_flush(f"   └─ AWX Página {page}: coletando...")
 
-                r = self.session.get(url, timeout=120)
+                # ALTERADO: Timeout de 120 para 60 segundos
+                r = self.session.get(url, timeout=60)
                 r.raise_for_status()
                 data = r.json()
 
@@ -240,7 +241,8 @@ def ensure_site(site_name):
 
     try:
         url_get = f"{NETBOX_URL}/api/dcim/sites/?name={site_name}"
-        response = requests.get(url_get, headers=HEADERS, verify=False, timeout=30)
+        # ALTERADO: Timeout de 30 para 60 segundos
+        response = requests.get(url_get, headers=HEADERS, verify=False, timeout=60)
         response.raise_for_status()
         resultados = response.json().get('results', [])
 
@@ -253,7 +255,8 @@ def ensure_site(site_name):
             print_flush(f"   AVISO: Site '{site_name}' não encontrado. A criar...")
             url_post = f"{NETBOX_URL}/api/dcim/sites/"
             payload = {"name": site_name, "slug": slugify(site_name), "status": "active"}
-            response_post = requests.post(url_post, headers=HEADERS, json=payload, verify=False, timeout=30)
+            # ALTERADO: Timeout de 30 para 60 segundos
+            response_post = requests.post(url_post, headers=HEADERS, json=payload, verify=False, timeout=60)
             response_post.raise_for_status()
             novo_site = response_post.json()
             site_id = novo_site['id']
@@ -271,7 +274,8 @@ def ensure_cluster_type(type_name="VMware vSphere"):
 
     try:
         url_get = f"{NETBOX_URL}/api/virtualization/cluster-types/?name={type_name}"
-        response = requests.get(url_get, headers=HEADERS, verify=False, timeout=30)
+        # ALTERADO: Timeout de 30 para 60 segundos
+        response = requests.get(url_get, headers=HEADERS, verify=False, timeout=60)
         response.raise_for_status()
         resultados = response.json().get('results', [])
         if resultados:
@@ -281,7 +285,8 @@ def ensure_cluster_type(type_name="VMware vSphere"):
         else:
             url_post = f"{NETBOX_URL}/api/virtualization/cluster-types/"
             payload = {"name": type_name, "slug": slugify(type_name)}
-            response_post = requests.post(url_post, headers=HEADERS, json=payload, verify=False, timeout=30)
+            # ALTERADO: Timeout de 30 para 60 segundos
+            response_post = requests.post(url_post, headers=HEADERS, json=payload, verify=False, timeout=60)
             response_post.raise_for_status()
             novo_tipo = response_post.json()
             type_id = novo_tipo['id']
@@ -304,7 +309,8 @@ def ensure_cluster(cluster_name, site_id):
 
     try:
         url_get = f"{NETBOX_URL}/api/virtualization/clusters/?name={cluster_name}"
-        response = requests.get(url_get, headers=HEADERS, verify=False, timeout=30)
+        # ALTERADO: Timeout de 30 para 60 segundos
+        response = requests.get(url_get, headers=HEADERS, verify=False, timeout=60)
         response.raise_for_status()
         resultados = response.json().get('results', [])
         if resultados:
@@ -314,7 +320,8 @@ def ensure_cluster(cluster_name, site_id):
         else:
             url_post = f"{NETBOX_URL}/api/virtualization/clusters/"
             payload = {"name": cluster_name, "type": type_id, "site": site_id}
-            response_post = requests.post(url_post, headers=HEADERS, json=payload, verify=False, timeout=30)
+            # ALTERADO: Timeout de 30 para 60 segundos
+            response_post = requests.post(url_post, headers=HEADERS, json=payload, verify=False, timeout=60)
             response_post.raise_for_status()
             novo_cluster = response_post.json()
             cluster_id = novo_cluster['id']
@@ -334,7 +341,8 @@ def ensure_device_role(role_name):
 
     try:
         url_get = f"{NETBOX_URL}/api/dcim/device-roles/?name={role_name}"
-        response = requests.get(url_get, headers=HEADERS, verify=False, timeout=30)
+        # ALTERADO: Timeout de 30 para 60 segundos
+        response = requests.get(url_get, headers=HEADERS, verify=False, timeout=60)
         response.raise_for_status()
         resultados = response.json().get('results', [])
 
@@ -352,7 +360,8 @@ def ensure_device_role(role_name):
                 "color": "00bcd4",
                 "vm_role": True
             }
-            response_post = requests.post(url_post, headers=HEADERS, json=payload, verify=False, timeout=30)
+            # ALTERADO: Timeout de 30 para 60 segundos
+            response_post = requests.post(url_post, headers=HEADERS, json=payload, verify=False, timeout=60)
             response_post.raise_for_status()
             nova_funcao = response_post.json()
             role_id = nova_funcao['id']
@@ -386,10 +395,12 @@ def ensure_vm(vm, role_id, site_id, cluster_id):
     existing_vm = _cache["existing_vms"].get(name)
     if existing_vm:
         vm_id = existing_vm["id"]
-        requests.patch(f"{NETBOX_URL}/api/virtualization/virtual-machines/{vm_id}/", headers=HEADERS, data=json.dumps(payload), verify=False)
+        # ALTERADO: Adicionado timeout de 60 segundos
+        requests.patch(f"{NETBOX_URL}/api/virtualization/virtual-machines/{vm_id}/", headers=HEADERS, data=json.dumps(payload), verify=False, timeout=60)
         print_flush(f"ATUALIZADA: VM atualizada: {name}")
     else:
-        r = requests.post(f"{NETBOX_URL}/api/virtualization/virtual-machines/", headers=HEADERS, data=json.dumps(payload), verify=False)
+        # ALTERADO: Adicionado timeout de 60 segundos
+        r = requests.post(f"{NETBOX_URL}/api/virtualization/virtual-machines/", headers=HEADERS, data=json.dumps(payload), verify=False, timeout=60)
         if r.status_code in [200, 201]:
             vm_id = r.json()["id"]
             _cache["existing_vms"][name] = {"id": vm_id, "name": name}
@@ -486,7 +497,8 @@ def ensure_tag(tag_name, tag_category, tag_description=""):
     tag_data = { "name": tag_name, "slug": tag_slug, "description": tag_description if tag_description else f"Categoria: {tag_category}" }
 
     try:
-        r = requests.post(f"{NETBOX_URL}/api/extras/tags/", headers=HEADERS, data=json.dumps(tag_data), verify=False, timeout=30)
+        # ALTERADO: Timeout de 30 para 60 segundos
+        r = requests.post(f"{NETBOX_URL}/api/extras/tags/", headers=HEADERS, data=json.dumps(tag_data), verify=False, timeout=60)
         if r.status_code in [200, 201]:
             created_tag = r.json()
             tag_id = created_tag["id"]
@@ -502,7 +514,8 @@ def ensure_tag(tag_name, tag_category, tag_description=""):
 
 def update_vm_tags(vm_id, tag_ids):
     try:
-        r = requests.get(f"{NETBOX_URL}/api/virtualization/virtual-machines/{vm_id}/", headers=HEADERS, verify=False, timeout=30)
+        # ALTERADO: Timeout de 30 para 60 segundos
+        r = requests.get(f"{NETBOX_URL}/api/virtualization/virtual-machines/{vm_id}/", headers=HEADERS, verify=False, timeout=60)
         if r.status_code == 200:
             vm_data = r.json()
             existing_tag_ids = [tag["id"] for tag in vm_data.get("tags", [])]
@@ -511,8 +524,9 @@ def update_vm_tags(vm_id, tag_ids):
 
             update_data = {"tags": all_tag_ids}
 
+            # ALTERADO: Timeout de 30 para 60 segundos
             r_update = requests.patch(f"{NETBOX_URL}/api/virtualization/virtual-machines/{vm_id}/",
-                                    headers=HEADERS, data=json.dumps(update_data), verify=False, timeout=30)
+                                    headers=HEADERS, data=json.dumps(update_data), verify=False, timeout=60)
 
             if r_update.status_code == 200:
                 new_tags_count = len(tag_ids) - len(set(tag_ids).intersection(set(existing_tag_ids)))
@@ -531,7 +545,8 @@ def ensure_interface(vm_id, name):
 
     payload = { "name": name, "virtual_machine": vm_id, "type": INTERFACE_TYPE }
     try:
-        r = requests.post(f"{NETBOX_URL}/api/virtualization/interfaces/", headers=HEADERS, data=json.dumps(payload), verify=False, timeout=30)
+        # ALTERADO: Timeout de 30 para 60 segundos
+        r = requests.post(f"{NETBOX_URL}/api/virtualization/interfaces/", headers=HEADERS, data=json.dumps(payload), verify=False, timeout=60)
         if r.status_code in [200, 201]:
             interface_data = r.json()
             interface_id = interface_data["id"]
@@ -554,10 +569,11 @@ def ensure_ip(ip_str, interface_id):
         current_interface = ip_data.get("assigned_object_id")
         if current_interface != interface_id:
             try:
+                # ALTERADO: Timeout de 30 para 60 segundos
                 requests.patch(f"{NETBOX_URL}/api/ipam/ip-addresses/{ip_id}/", headers=HEADERS, data=json.dumps({
                     "assigned_object_type": "virtualization.vminterface",
                     "assigned_object_id": interface_id
-                }), verify=False, timeout=30)
+                }), verify=False, timeout=60)
                 _cache["existing_ips"][ip_only]["assigned_object_id"] = interface_id
             except Exception as e:
                 print_flush(f"ERRO: Erro ao atualizar associação do IP {ip_str}: {e}")
@@ -566,7 +582,8 @@ def ensure_ip(ip_str, interface_id):
 
     payload = { "address": ip_str, "status": "active", "assigned_object_type": "virtualization.vminterface", "assigned_object_id": interface_id }
     try:
-        r = requests.post(f"{NETBOX_URL}/api/ipam/ip-addresses/", headers=HEADERS, data=json.dumps(payload), verify=False, timeout=30)
+        # ALTERADO: Timeout de 30 para 60 segundos
+        r = requests.post(f"{NETBOX_URL}/api/ipam/ip-addresses/", headers=HEADERS, data=json.dumps(payload), verify=False, timeout=60)
         if r.status_code in [200, 201]:
             ip_data = r.json()
             ip_id = ip_data["id"]
@@ -581,7 +598,8 @@ def ensure_ip(ip_str, interface_id):
 
 def update_primary_ip(vm_id, ip_id):
     payload = {"primary_ip4": ip_id}
-    requests.patch(f"{NETBOX_URL}/api/virtualization/virtual-machines/{vm_id}/", headers=HEADERS, data=json.dumps(payload), verify=False)
+    # ALTERADO: Adicionado timeout de 60 segundos
+    requests.patch(f"{NETBOX_URL}/api/virtualization/virtual-machines/{vm_id}/", headers=HEADERS, data=json.dumps(payload), verify=False, timeout=60)
 
 # === EXECUÇÃO PRINCIPAL ===
 def main():
