@@ -1,10 +1,10 @@
 ---
-- name: Executar sincronização AWX → NetBox via script Python
+- name: Executar sincronizacao AWX para NetBox via script Python
   hosts: localhost
   gather_facts: false
 
   tasks:
-    - name: Verificar diretório de trabalho
+    - name: Verificar diretorio de trabalho
       ansible.builtin.shell: |
         echo "Diretorio atual: $(pwd)"
         echo "Conteudo do diretorio:"
