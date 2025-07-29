@@ -144,7 +144,23 @@ def bulk_api_call(endpoint, object_list, operation='post'):
             if response.status_code != 204:
                  created_objects.extend(response.json())
         except requests.exceptions.RequestException as e:
-            print_flush(f"ERRO: Falha no lote de {action_str} para {endpoint}: {e.response.text if e.response else e}")
+            # --- SEÇÃO DE LOG MELHORADA ---
+            print_flush(f"ERRO: Falha no lote de {action_str} para {endpoint}.")
+            if e.response:
+                print_flush(f"      Status Code: {e.response.status_code}")
+                try:
+                    # Imprime a mensagem de erro detalhada que o NetBox envia
+                    print_flush(f"      Detalhes do Erro NetBox: {json.dumps(e.response.json(), indent=2, ensure_ascii=False)}")
+                except json.JSONDecodeError:
+                    print_flush(f"      Resposta Bruta (não JSON): {e.response.text}")
+            else:
+                print_flush(f"      Erro de Conexão: {e}")
+            
+            # Imprime o lote de dados exato que causou a falha
+            print_flush("      --- Lote de Dados com Falha ---")
+            print_flush(json.dumps(batch, indent=2, ensure_ascii=False))
+            print_flush("      --- Fim do Lote de Dados ---")
+            # --- FIM DA SEÇÃO MELHORADA ---
 
     return created_objects
 
