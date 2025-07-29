@@ -1,38 +1,24 @@
 ---
-- name: Executar sincronizacao AWX para NetBox
+- name: 'Debug de variáveis de ambiente (CORRIGIDO)'
   hosts: localhost
   gather_facts: false
-
   tasks:
-    - name: Debug variaveis
+    - name: Mostra as variáveis injetadas pelo AWX
       shell: |
-        echo "=== VARIAVEIS NETBOX ==="
-        env | grep NETBOX || echo "Nenhuma encontrada"
+        echo "========================================="
+        echo "===       VARIAVEIS DO NETBOX       ==="
+        echo "========================================="
+        env | grep NETBOX || echo ">>> Nenhuma variável NETBOX encontrada."
         echo ""
-        echo "=== VARIAVEIS AWX ==="
-        env | grep AWX || echo "Nenhuma encontrada"
+        echo "NETBOX_API (URL do Host): [{{ lookup('env', 'NETBOX_API') }}]"
+        echo "NETBOX_TOKEN presente: [{{ 'Sim' if lookup('env', 'NETBOX_TOKEN') else 'Não' }}]"
         echo ""
-        echo "=== DEBUG URL ==="
-        echo "NETBOX_API: [$NETBOX_API]"
-        echo "NETBOX_URL: [$NETBOX_URL]"
-        echo "Tamanho NETBOX_API: ${#NETBOX_API}"
-        echo "Tamanho NETBOX_URL: ${#NETBOX_URL}"
-      register: debug_result
-
-    - name: Mostrar debug
-      debug:
-        var: debug_result.stdout_lines
-
-    - name: Executar script Python
-      shell: |
-        cd /runner/project
-        python3 -u scripts/awx-netbox.py
-      register: script_result
-      failed_when: false
-
-    - name: Mostrar resultado
-      debug:
-        msg: |
-          Return code: {{ script_result.rc }}
-          STDOUT: {{ script_result.stdout }}
-          STDERR: {{ script_result.stderr }}
+        echo "========================================="
+        echo "===        VARIAVEIS DO AWX         ==="
+        echo "========================================="
+        env | grep AWX || echo ">>> Nenhuma variável AWX encontrada."
+        echo ""
+        echo "AWX_USERNAME: [{{ lookup('env', 'AWX_USERNAME') }}]"
+        echo "AWX_PASSWORD presente: [{{ 'Sim' if lookup('env', 'AWX_PASSWORD') else 'Não' }}]"
+        echo ""
+        echo "========================================="
