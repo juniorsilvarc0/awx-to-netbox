@@ -373,7 +373,7 @@ def ensure_vm(vm, role_id, site_id, cluster_id):
         "name": name,
         "vcpus": vm.get("vm_cpu_count"),
         "memory": int(vm.get("vm_memory_mb")),
-        "disk": int(vm.get("vm_disk_total_gb") * 1024),
+        "disk": int(vm.get("vm_disk_total_gb")),
         "status": status,
         "site": site_id,
         "cluster": cluster_id,
