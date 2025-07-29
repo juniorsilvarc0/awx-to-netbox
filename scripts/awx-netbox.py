@@ -38,19 +38,19 @@ CLUSTER_MAP = {
 
 # Verificar se as variáveis necessárias estão definidas
 if not AWX_USER:
-    print("❌ Erro: AWX_USERNAME não definido!")
+    print("Erro: AWX_USERNAME nao definido!")
     exit(1)
 if not AWX_PASSWORD:
-    print("❌ Erro: AWX_PASSWORD não definido!")
+    print("Erro: AWX_PASSWORD nao definido!")
     exit(1)
 if not NETBOX_URL:
-    print("❌ Erro: NETBOX_API não definido!")
+    print("Erro: NETBOX_API nao definido!")
     exit(1)
 if not NETBOX_TOKEN:
-    print("❌ Erro: NETBOX_TOKEN não definido!")
+    print("Erro: NETBOX_TOKEN nao definido!")
     exit(1)
 
-print_flush(f"✅ Configuração:")
+print_flush(f"Configuracao:")
 print_flush(f"   AWX URL: {AWX_URL}")
 print_flush(f"   AWX User: {AWX_USER}")
 print_flush(f"   NetBox URL: {NETBOX_URL}")
@@ -85,12 +85,12 @@ class SimpleAWXCollector:
         self.session.verify = False
 
     def list_hosts(self):
-        print_flush("🔍 Conectando ao AWX...")
+        print_flush("Conectando ao AWX...")
         try:
             inv_url = f"{AWX_URL}/api/v2/inventories/"
             invs = self._paginated_get(inv_url)
             if not invs:
-                print_flush("❌ Nenhum inventário encontrado")
+                print_flush("Nenhum inventario encontrado")
                 return []
 
             vmware_inv = None
@@ -100,14 +100,14 @@ class SimpleAWXCollector:
                     break
 
             if not vmware_inv:
-                print_flush("❌ Inventário 'VMware Inventory' não encontrado!")
+                print_flush("Inventario 'VMware Inventory' nao encontrado!")
                 available_invs = [inv["name"] for inv in invs]
                 print_flush(f"   Inventários disponíveis: {available_invs}")
                 return []
 
             inv_id = vmware_inv["id"]
             inv_name = vmware_inv["name"]
-            print_flush(f"📦 Coletando hosts do inventário '{inv_name}' (ID {inv_id})")
+            print_flush(f"Coletando hosts do inventario '{inv_name}' (ID {inv_id})")
 
             try:
                 url = f"{AWX_URL}/api/v2/inventories/{inv_id}/hosts/"
@@ -123,7 +123,7 @@ class SimpleAWXCollector:
                         else:
                             vars_dict = vars_raw
                     except json.JSONDecodeError:
-                        print_flush(f"⚠️ Ignorando host {host['name']} - variáveis inválidas")
+                        print_flush(f"Ignorando host {host['name']} - variaveis invalidas")
                         continue
 
                     # Adiciona valores padrão se ausentes, para consistência
@@ -135,14 +135,14 @@ class SimpleAWXCollector:
                     all_hosts.append(vars_dict)
 
             except Exception as e:
-                print_flush(f"❌ Erro ao processar inventário {inv_name}: {e}")
+                print_flush(f"Erro ao processar inventario {inv_name}: {e}")
                 return []
 
-            print_flush(f"✅ Total de VMs encontradas: {len(all_hosts)}")
+            print_flush(f"Total de VMs encontradas: {len(all_hosts)}")
             return all_hosts
 
         except Exception as e:
-            print_flush(f"❌ Erro fatal na coleta do AWX: {e}")
+            print_flush(f"Erro fatal na coleta do AWX: {e}")
             raise
 
     def _paginated_get(self, url):
@@ -188,11 +188,11 @@ class SimpleAWXCollector:
                     break
 
                 if page > 1000:
-                    print_flush(f"⚠️ AWX: Limite de páginas atingido")
+                    print_flush(f"AVISO: AWX: Limite de páginas atingido")
                     break
 
             except requests.exceptions.Timeout:
-                print_flush(f"⚠️ AWX Timeout na página {page} - tentando continuar...")
+                print_flush(f"AVISO: AWX Timeout na página {page} - tentando continuar...")
                 if url and "page=" in url:
                     import re
                     page_match = re.search(r'page=(\d+)', url)
@@ -203,19 +203,19 @@ class SimpleAWXCollector:
                         continue
                 break
             except requests.exceptions.RequestException as e:
-                print_flush(f"❌ AWX Erro na requisição página {page}: {e}")
+                print_flush(f"ERRO: AWX Erro na requisição página {page}: {e}")
                 break
             except json.JSONDecodeError as e:
-                print_flush(f"❌ AWX Erro ao decodificar JSON página {page}: {e}")
+                print_flush(f"ERRO: AWX Erro ao decodificar JSON página {page}: {e}")
                 break
             except Exception as e:
-                print_flush(f"❌ AWX Erro inesperado página {page}: {e}")
+                print_flush(f"ERRO: AWX Erro inesperado página {page}: {e}")
                 break
 
         if total_count:
-            print_flush(f"✅ AWX: {len(results)}/{total_count} itens coletados em {page-1} páginas")
+            print_flush(f"SUCESSO: AWX: {len(results)}/{total_count} itens coletados em {page-1} páginas")
         else:
-            print_flush(f"✅ AWX: {len(results)} itens coletados em {page-1} páginas")
+            print_flush(f"SUCESSO: AWX: {len(results)} itens coletados em {page-1} páginas")
 
         return results
 
@@ -246,22 +246,22 @@ def ensure_site(site_name):
 
         if resultados:
             site_id = resultados[0]['id']
-            print_flush(f"   ✅ Site '{site_name}' já existe. ID: {site_id}")
+            print_flush(f"   SUCESSO: Site '{site_name}' já existe. ID: {site_id}")
             _cache["sites"][site_name] = site_id
             return site_id
         else:
-            print_flush(f"   ⚠️  Site '{site_name}' não encontrado. A criar...")
+            print_flush(f"   AVISO: Site '{site_name}' não encontrado. A criar...")
             url_post = f"{NETBOX_URL}/api/dcim/sites/"
             payload = {"name": site_name, "slug": slugify(site_name), "status": "active"}
             response_post = requests.post(url_post, headers=HEADERS, json=payload, verify=False, timeout=30)
             response_post.raise_for_status()
             novo_site = response_post.json()
             site_id = novo_site['id']
-            print_flush(f"   ✅ Site '{site_name}' criado com sucesso. ID: {site_id}")
+            print_flush(f"   SUCESSO: Site '{site_name}' criado com sucesso. ID: {site_id}")
             _cache["sites"][site_name] = site_id
             return site_id
     except Exception as e:
-        print_flush(f"   ❌ Erro ao garantir o site '{site_name}': {e}")
+        print_flush(f"   ERRO: Erro ao garantir o site '{site_name}': {e}")
         return None
 
 def ensure_cluster_type(type_name="VMware vSphere"):
@@ -288,7 +288,7 @@ def ensure_cluster_type(type_name="VMware vSphere"):
             _cache["cluster_types"][type_name] = type_id
             return type_id
     except Exception as e:
-        print_flush(f"   ❌ Erro ao garantir o tipo de cluster '{type_name}': {e}")
+        print_flush(f"   ERRO: Erro ao garantir o tipo de cluster '{type_name}': {e}")
         return None
 
 def ensure_cluster(cluster_name, site_id):
@@ -321,7 +321,7 @@ def ensure_cluster(cluster_name, site_id):
             _cache["clusters"][cache_key] = cluster_id
             return cluster_id
     except Exception as e:
-        print_flush(f"   ❌ Erro ao garantir o cluster '{cluster_name}': {e}")
+        print_flush(f"   ERRO: Erro ao garantir o cluster '{cluster_name}': {e}")
         return None
 
 def ensure_device_role(role_name):
@@ -340,11 +340,11 @@ def ensure_device_role(role_name):
 
         if resultados:
             role_id = resultados[0]['id']
-            print_flush(f"   ✅ Função '{role_name}' já existe. ID: {role_id}")
+            print_flush(f"   SUCESSO: Função '{role_name}' já existe. ID: {role_id}")
             _cache["device_roles"][role_name] = role_id
             return role_id
         else:
-            print_flush(f"   ⚠️  Função '{role_name}' não encontrada. A criar...")
+            print_flush(f"   AVISO: Função '{role_name}' não encontrada. A criar...")
             url_post = f"{NETBOX_URL}/api/dcim/device-roles/"
             payload = {
                 "name": role_name,
@@ -356,12 +356,12 @@ def ensure_device_role(role_name):
             response_post.raise_for_status()
             nova_funcao = response_post.json()
             role_id = nova_funcao['id']
-            print_flush(f"   ✅ Função '{role_name}' criada com sucesso. ID: {role_id}")
+            print_flush(f"   SUCESSO: Função '{role_name}' criada com sucesso. ID: {role_id}")
             _cache["device_roles"][role_name] = role_id
             return role_id
 
     except requests.exceptions.RequestException as e:
-        print_flush(f"   ❌ Erro ao comunicar com NetBox para gerir a função: {e}")
+        print_flush(f"   ERRO: Erro ao comunicar com NetBox para gerir a função: {e}")
         return None
 
 def ensure_vm(vm, role_id, site_id, cluster_id):
@@ -387,15 +387,15 @@ def ensure_vm(vm, role_id, site_id, cluster_id):
     if existing_vm:
         vm_id = existing_vm["id"]
         requests.patch(f"{NETBOX_URL}/api/virtualization/virtual-machines/{vm_id}/", headers=HEADERS, data=json.dumps(payload), verify=False)
-        print_flush(f"♻️ VM atualizada: {name}")
+        print_flush(f"ATUALIZADA: VM atualizada: {name}")
     else:
         r = requests.post(f"{NETBOX_URL}/api/virtualization/virtual-machines/", headers=HEADERS, data=json.dumps(payload), verify=False)
         if r.status_code in [200, 201]:
             vm_id = r.json()["id"]
             _cache["existing_vms"][name] = {"id": vm_id, "name": name}
-            print_flush(f"✅ VM criada: {name}")
+            print_flush(f"CRIADA: VM criada: {name}")
         else:
-            print_flush(f"❌ Falha ao criar VM {name}: {r.text}")
+            print_flush(f"ERRO: Falha ao criar VM {name}: {r.text}")
             return None
 
     return vm_id
@@ -407,7 +407,7 @@ def paginated_get_all(endpoint, query=""):
     page = 1
     total_count = None
 
-    print_flush(f"🔍 Paginando {endpoint}...")
+    print_flush(f"PAGINANDO: {endpoint}...")
 
     while url:
         try:
@@ -446,11 +446,11 @@ def paginated_get_all(endpoint, query=""):
                 break
 
             if page > 2000:
-                print_flush(f"⚠️ Limite de páginas atingido para {endpoint}")
+                print_flush(f"AVISO: Limite de páginas atingido para {endpoint}")
                 break
 
         except requests.exceptions.Timeout:
-            print_flush(f"⚠️ Timeout na página {page} - tentando continuar...")
+            print_flush(f"AVISO: Timeout na página {page} - tentando continuar...")
             if url and "offset=" in url:
                 import re
                 offset_match = re.search(r'offset=(\d+)', url)
@@ -461,19 +461,19 @@ def paginated_get_all(endpoint, query=""):
                     continue
             break
         except requests.exceptions.RequestException as e:
-            print_flush(f"❌ Erro na requisição página {page}: {e}")
+            print_flush(f"ERRO: Erro na requisição página {page}: {e}")
             break
         except json.JSONDecodeError as e:
-            print_flush(f"❌ Erro ao decodificar JSON página {page}: {e}")
+            print_flush(f"ERRO: Erro ao decodificar JSON página {page}: {e}")
             break
         except Exception as e:
-            print_flush(f"❌ Erro inesperado página {page}: {e}")
+            print_flush(f"ERRO: Erro inesperado página {page}: {e}")
             break
 
     if total_count:
-        print_flush(f"✅ {endpoint}: {len(results)}/{total_count} itens coletados em {page-1} páginas")
+        print_flush(f"SUCESSO: {endpoint}: {len(results)}/{total_count} itens coletados em {page-1} páginas")
     else:
-        print_flush(f"✅ {endpoint}: {len(results)} itens coletados em {page-1} páginas")
+        print_flush(f"SUCESSO: {endpoint}: {len(results)} itens coletados em {page-1} páginas")
 
     return results
 
@@ -491,13 +491,13 @@ def ensure_tag(tag_name, tag_category, tag_description=""):
             created_tag = r.json()
             tag_id = created_tag["id"]
             _cache["existing_tags"][tag_slug] = created_tag
-            print_flush(f"   🏷️ Tag criada: {tag_name}")
+            print_flush(f"   TAG CRIADA: {tag_name}")
             return tag_id
         else:
-            print_flush(f"❌ Falha ao criar tag {tag_name}: {r.text}")
+            print_flush(f"ERRO: Falha ao criar tag {tag_name}: {r.text}")
             return None
     except Exception as e:
-        print_flush(f"❌ Erro ao criar tag {tag_name}: {e}")
+        print_flush(f"ERRO: Erro ao criar tag {tag_name}: {e}")
         return None
 
 def update_vm_tags(vm_id, tag_ids):
@@ -517,11 +517,11 @@ def update_vm_tags(vm_id, tag_ids):
             if r_update.status_code == 200:
                 new_tags_count = len(tag_ids) - len(set(tag_ids).intersection(set(existing_tag_ids)))
                 if new_tags_count > 0:
-                    print_flush(f"   🏷️ {new_tags_count} novas tags adicionadas à VM")
+                    print_flush(f"   TAGS: {new_tags_count} novas tags adicionadas à VM")
                 return True
         return False
     except Exception as e:
-        print_flush(f"❌ Erro ao atualizar tags da VM: {e}")
+        print_flush(f"ERRO: Erro ao atualizar tags da VM: {e}")
         return False
 
 def ensure_interface(vm_id, name):
@@ -538,10 +538,10 @@ def ensure_interface(vm_id, name):
             _cache["existing_interfaces"][interface_key] = interface_data
             return interface_id
         else:
-            print_flush(f"❌ Falha ao criar interface {name}: {r.text}")
+            print_flush(f"ERRO: Falha ao criar interface {name}: {r.text}")
             return None
     except Exception as e:
-        print_flush(f"❌ Erro ao criar interface {name}: {e}")
+        print_flush(f"ERRO: Erro ao criar interface {name}: {e}")
         return None
 
 def ensure_ip(ip_str, interface_id):
@@ -560,7 +560,7 @@ def ensure_ip(ip_str, interface_id):
                 }), verify=False, timeout=30)
                 _cache["existing_ips"][ip_only]["assigned_object_id"] = interface_id
             except Exception as e:
-                print_flush(f"❌ Erro ao atualizar associação do IP {ip_str}: {e}")
+                print_flush(f"ERRO: Erro ao atualizar associação do IP {ip_str}: {e}")
 
         return ip_id
 
@@ -573,10 +573,10 @@ def ensure_ip(ip_str, interface_id):
             _cache["existing_ips"][ip_only] = ip_data
             return ip_id
         else:
-            print_flush(f"❌ Falha ao criar IP {ip_str}: {r.text}")
+            print_flush(f"ERRO: Falha ao criar IP {ip_str}: {r.text}")
             return None
     except Exception as e:
-        print_flush(f"❌ Erro ao criar IP {ip_str}: {e}")
+        print_flush(f"ERRO: Erro ao criar IP {ip_str}: {e}")
         return None
 
 def update_primary_ip(vm_id, ip_id):
@@ -585,28 +585,28 @@ def update_primary_ip(vm_id, ip_id):
 
 # === EXECUÇÃO PRINCIPAL ===
 def main():
-    print_flush("🚀 Iniciando sincronização AWX → NetBox...")
+    print_flush("INICIANDO: Sincronização AWX -> NetBox...")
     collector = SimpleAWXCollector()
     vms = collector.list_hosts()
 
-    print_flush("📋 Carregando cache essencial do NetBox...")
+    print_flush("CARREGANDO: Cache essencial do NetBox...")
 
     try:
-        print_flush("   🖥️ Carregando VMs...")
+        print_flush("   CARREGANDO: VMs...")
         all_vms = paginated_get_all("virtualization/virtual-machines")
         _cache["existing_vms"] = {vm["name"]: vm for vm in all_vms}
-        print_flush(f"   └─ ✅ {len(_cache['existing_vms'])} VMs carregadas")
+        print_flush(f"   └─ SUCESSO: {len(_cache['existing_vms'])} VMs carregadas")
     except Exception as e:
-        print_flush(f"❌ Erro ao carregar VMs: {e}")
+        print_flush(f"ERRO: Erro ao carregar VMs: {e}")
         _cache["existing_vms"] = {}
 
     _cache["existing_interfaces"] = {}
     _cache["existing_ips"] = {}
     _cache["existing_tags"] = {}
 
-    print_flush(f"✅ Cache essencial carregado! Outros caches serão populados sob demanda.")
+    print_flush(f"SUCESSO: Cache essencial carregado! Outros caches serão populados sob demanda.")
 
-    print_flush(f"🔄 Processando {len(vms)} VMs completas (VM + Interface + IP + Tags + Função)...")
+    print_flush(f"PROCESSANDO: {len(vms)} VMs completas (VM + Interface + IP + Tags + Função)...")
     success_count = 0
     error_count = 0
 
@@ -619,7 +619,7 @@ def main():
                 continue
 
             if i % batch_size == 0 or i == 1 or i == len(vms):
-                print_flush(f"📝 Progresso: {i}/{len(vms)} VMs ({success_count} ok, {error_count} erros)")
+                print_flush(f"PROGRESSO: {i}/{len(vms)} VMs ({success_count} ok, {error_count} erros)")
                 if i % (batch_size * 10) == 0:
                     import time
                     time.sleep(1)
@@ -671,7 +671,7 @@ def main():
             # 6. Criar/atualizar interface eth0 (lógica existente)
             interface_id = ensure_interface(vm_id, "eth0")
             if not interface_id:
-                print_flush(f"⚠️ Falha ao criar interface para VM {vm_name}")
+                print_flush(f"AVISO: Falha ao criar interface para VM {vm_name}")
                 error_count += 1
                 continue
 
@@ -687,26 +687,26 @@ def main():
 
                     primary_ip_id = ensure_ip(primary_ip, interface_id)
                     if primary_ip_id:
-                        print_flush(f"✅ IP {primary_ip} associado à interface eth0 da VM {vm_name}")
+                        print_flush(f"SUCESSO: IP {primary_ip} associado à interface eth0 da VM {vm_name}")
                     else:
-                        print_flush(f"⚠️ Falha ao associar IP {primary_ip} à VM {vm_name}")
+                        print_flush(f"AVISO: Falha ao associar IP {primary_ip} à VM {vm_name}")
 
             # 8. Definir IP primário na VM (lógica existente)
             if primary_ip_id:
                 update_primary_ip(vm_id, primary_ip_id)
-                print_flush(f"🎯 IP primário definido para VM {vm_name}")
+                print_flush(f"IP PRIMARIO: IP primário definido para VM {vm_name}")
 
             success_count += 1
 
         except KeyboardInterrupt:
-            print_flush(f"\n⚠️ Interrompido pelo usuário. Processadas {i} VMs.")
+            print_flush(f"\nAVISO: Interrompido pelo usuário. Processadas {i} VMs.")
             break
         except Exception as e:
             error_count += 1
-            print_flush(f"❌ Erro ao processar VM {vm.get('vm_name')}: {e}")
+            print_flush(f"ERRO: Erro ao processar VM {vm.get('vm_name')}: {e}")
             traceback.print_exc()
 
-    print_flush(f"🎉 Sincronização concluída! ✅ {success_count} VMs processadas, ❌ {error_count} erros")
+    print_flush(f"CONCLUIDO: Sincronização concluída! SUCESSO: {success_count} VMs processadas, ERRO: {error_count} erros")
 
 if __name__ == "__main__":
     main()

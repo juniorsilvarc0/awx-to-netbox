@@ -6,38 +6,38 @@
   tasks:
     - name: Verificar diretório de trabalho
       ansible.builtin.shell: |
-        echo "📂 Diretório atual: $(pwd)"
-        echo "📋 Conteúdo do diretório:"
+        echo "Diretorio atual: $(pwd)"
+        echo "Conteudo do diretorio:"
         ls -la
         echo ""
-        echo "📂 Subindo para o diretório projeto:"
+        echo "Subindo para o diretorio projeto:"
         cd ..
-        echo "📂 Diretório projeto: $(pwd)"
+        echo "Diretorio projeto: $(pwd)"
         ls -la
         echo ""
-        echo "🔍 Verificando se script existe:"
-        ls -la scripts/awx-netbox.py || echo "❌ Script não encontrado!"
+        echo "Verificando se script existe:"
+        ls -la scripts/awx-netbox.py || echo "Script nao encontrado!"
         echo ""
-        echo "🐍 Verificando Python:"
+        echo "Verificando Python:"
         python3 --version
         echo ""
-        echo "🔍 Verificando variáveis de ambiente..."
-        echo "AWX_USERNAME: '${AWX_USERNAME:-NÃO_DEFINIDO}'"
+        echo "Verificando variaveis de ambiente..."
+        echo "AWX_USERNAME: '${AWX_USERNAME:-NAO_DEFINIDO}'"
         echo "AWX_PASSWORD: '${AWX_PASSWORD:+DEFINIDO}'"
-        echo "NETBOX_API: '${NETBOX_API:-NÃO_DEFINIDO}'"
-        echo "NETBOX_URL: '${NETBOX_URL:-NÃO_DEFINIDO}'"
+        echo "NETBOX_API: '${NETBOX_API:-NAO_DEFINIDO}'"
+        echo "NETBOX_URL: '${NETBOX_URL:-NAO_DEFINIDO}'"
         echo "NETBOX_TOKEN: '${NETBOX_TOKEN:+DEFINIDO}'"
         echo ""
-        echo "🔍 Debug detalhado da URL:"
+        echo "Debug detalhado da URL:"
         echo "Tamanho da NETBOX_API: ${#NETBOX_API}"
         echo "NETBOX_API em hex: $(echo -n "$NETBOX_API" | xxd -p -c 256)"
-        echo "Todas as variáveis que começam com NETBOX:"
+        echo "Todas as variaveis que comecam com NETBOX:"
         env | grep -E '^NETBOX' || echo "Nenhuma encontrada"
         echo ""
-        echo "🔍 Testando conectividade:"
+        echo "Testando conectividade:"
         if [ -n "$NETBOX_API" ]; then
           echo "Tentando curl para: $NETBOX_API"
-          curl -I "$NETBOX_API" --connect-timeout 5 || echo "Falha na conexão"
+          curl -I "$NETBOX_API" --connect-timeout 5 || echo "Falha na conexao"
         fi
       args:
         chdir: "{{ ansible_env.ANSIBLE_PROJECT_DIR | default('.') }}"
@@ -49,7 +49,7 @@
 
     - name: Executar script Python
       ansible.builtin.shell: |
-        echo "🚀 Executando script Python..."
+        echo "Executando script Python..."
         cd ..
         python3 -u scripts/awx-netbox.py
       args:
