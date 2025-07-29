@@ -21,11 +21,24 @@
         echo "🐍 Verificando Python:"
         python3 --version
         echo ""
-        echo "🔍 Verificando variáveis..."
-        echo "AWX_USERNAME: ${AWX_USERNAME:-'NÃO DEFINIDO'}"
-        echo "AWX_PASSWORD: ${AWX_PASSWORD:+'DEFINIDO'}"
-        echo "NETBOX_API: ${NETBOX_API:-'NÃO DEFINIDO'}"
-        echo "NETBOX_TOKEN: ${NETBOX_TOKEN:+'DEFINIDO'}"
+        echo "🔍 Verificando variáveis de ambiente..."
+        echo "AWX_USERNAME: '${AWX_USERNAME:-NÃO_DEFINIDO}'"
+        echo "AWX_PASSWORD: '${AWX_PASSWORD:+DEFINIDO}'"
+        echo "NETBOX_API: '${NETBOX_API:-NÃO_DEFINIDO}'"
+        echo "NETBOX_URL: '${NETBOX_URL:-NÃO_DEFINIDO}'"
+        echo "NETBOX_TOKEN: '${NETBOX_TOKEN:+DEFINIDO}'"
+        echo ""
+        echo "🔍 Debug detalhado da URL:"
+        echo "Tamanho da NETBOX_API: ${#NETBOX_API}"
+        echo "NETBOX_API em hex: $(echo -n "$NETBOX_API" | xxd -p -c 256)"
+        echo "Todas as variáveis que começam com NETBOX:"
+        env | grep -E '^NETBOX' || echo "Nenhuma encontrada"
+        echo ""
+        echo "🔍 Testando conectividade:"
+        if [ -n "$NETBOX_API" ]; then
+          echo "Tentando curl para: $NETBOX_API"
+          curl -I "$NETBOX_API" --connect-timeout 5 || echo "Falha na conexão"
+        fi
       args:
         chdir: "{{ ansible_env.ANSIBLE_PROJECT_DIR | default('.') }}"
       register: debug_result
