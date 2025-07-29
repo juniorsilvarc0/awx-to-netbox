@@ -13,7 +13,7 @@
             cmd: python3 -u scripts/awx-netbox.py
             chdir: /runner/project
           register: script_result
-          failed_when: script_result.rc != 0
+          failed_when: false  # Nunca falha - sempre mostra resultado
 
       always:
         # Esta seção SEMPRE será executada, mesmo se o bloco acima falhar.
@@ -27,3 +27,8 @@
               - "{{ script_result.stdout }}"
               - "Erros (STDERR):"
               - "{{ script_result.stderr }}"
+
+        - name: Falhar job se script retornou erro critico
+          ansible.builtin.fail:
+            msg: "Script falhou com código de retorno {{ script_result.rc }}"
+          when: script_result.rc != 0
