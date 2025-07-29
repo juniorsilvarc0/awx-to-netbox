@@ -24,6 +24,11 @@ AWX_PASSWORD = os.getenv("AWX_PASSWORD")
 NETBOX_URL = os.getenv("NETBOX_URL") or os.getenv("NETBOX_API")
 NETBOX_TOKEN = os.getenv("NETBOX_TOKEN")
 
+# CORREÇÃO: Corrigir URL truncada pelo AWX
+if NETBOX_URL and "etboxhomologacao" in NETBOX_URL and "netbox" not in NETBOX_URL:
+    NETBOX_URL = NETBOX_URL.replace("etboxhomologacao", "netboxhomologacao")
+    print_flush(f"CORRIGIDO: URL NetBox corrigida: {NETBOX_URL}")
+
 # --- INÍCIO DAS NOVAS ALTERAÇÕES ---
 # Mapeamento de Datacenter (AWX) para Site (NetBox)
 DATACENTER_TO_SITE_MAP = {

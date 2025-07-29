@@ -1,22 +1,29 @@
-- name: Executar sincronizacao AWX para NetBox
+---
+- name: Sincronizar VMware (via AWX) para NetBox
   hosts: localhost
   gather_facts: false
 
   tasks:
-    - name: Executar o script de sincronizacao (awx-netbox.py)
-      ansible.builtin.command:
-        cmd: python3 -u scripts/awx-netbox.py
-        chdir: /runner/project
-      register: script_result
-      failed_when: script_result.rc != 0
+    - name: Executar script e garantir a exibicao do resultado
+      block:
+        # Esta tarefa tenta executar o script.
+        # Se o script retornar um erro (código diferente de 0), a tarefa vai falhar.
+        - name: Executar o script de sincronizacao (awx-netbox.py)
+          ansible.builtin.command:
+            cmd: python3 -u scripts/awx-netbox.py
+            chdir: /runner/project
+          register: script_result
+          failed_when: script_result.rc != 0
 
-    - name: Mostrar resultado da execucao
-      ansible.builtin.debug:
-        msg:
-          - "Status: {{ 'Sucesso' if script_result.rc == 0 else 'Falha' }}"
-          - "Return Code: {{ script_result.rc }}"
-          - "Saida (STDOUT):"
-          - "{{ script_result.stdout }}"
-          - "Erros (STDERR):"
-          - "{{ script_result.stderr }}"
-      always: true
+      always:
+        # Esta seção SEMPRE será executada, mesmo se o bloco acima falhar.
+        # Isso garante que você sempre veja o log de saída.
+        - name: Mostrar resultado da execucao
+          ansible.builtin.debug:
+            msg:
+              - "Status: {{ 'Sucesso' if script_result.rc == 0 else 'Falha' }}"
+              - "Return Code: {{ script_result.rc }}"
+              - "Saida (STDOUT):"
+              - "{{ script_result.stdout }}"
+              - "Erros (STDERR):"
+              - "{{ script_result.stderr }}"
