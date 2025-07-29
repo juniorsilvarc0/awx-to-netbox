@@ -6,21 +6,17 @@
   tasks:
     - name: Debug variaveis
       shell: |
-        echo "=== TODAS AS VARIAVEIS DE AMBIENTE ==="
-        env | sort
+        echo "=== VARIAVEIS NETBOX ==="
+        env | grep NETBOX || echo "Nenhuma encontrada"
         echo ""
-        echo "=== VARIAVEIS ESPECIFICAS ==="
-        echo "AWX_USERNAME: '$AWX_USERNAME'"
-        echo "AWX_PASSWORD: '${AWX_PASSWORD:+DEFINIDO}'"
-        echo "NETBOX_API: '$NETBOX_API'"
-        echo "NETBOX_URL: '$NETBOX_URL'"
-        echo "NETBOX_TOKEN: '${NETBOX_TOKEN:+DEFINIDO}'"
+        echo "=== VARIAVEIS AWX ==="
+        env | grep AWX || echo "Nenhuma encontrada"
         echo ""
-        echo "=== DEBUG DETALHADO DA URL ==="
+        echo "=== DEBUG URL ==="
+        echo "NETBOX_API: [$NETBOX_API]"
+        echo "NETBOX_URL: [$NETBOX_URL]"
         echo "Tamanho NETBOX_API: ${#NETBOX_API}"
-        echo "NETBOX_API em hex: $(echo -n '$NETBOX_API' | xxd -p -c 256 2>/dev/null || echo 'xxd nao disponivel')"
-        echo "Caracteres da URL:"
-        echo -n '$NETBOX_API' | sed 's/./&\n/g' | nl
+        echo "Tamanho NETBOX_URL: ${#NETBOX_URL}"
       register: debug_result
 
     - name: Mostrar debug
