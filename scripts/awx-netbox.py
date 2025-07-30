@@ -219,7 +219,6 @@ def main():
     for vm in created_vms:
         _cache['vms'][vm['name']] = vm
         
-    # ================= INÍCIO DA SEÇÃO REESCRITA =================
     print_flush("\nFASE 5: Sincronizando Interfaces e IPs de forma sequencial para garantir dependências...")
 
     # ETAPA 5.1: Carregar estado atual de interfaces e IPs
@@ -248,7 +247,10 @@ def main():
         print_flush("   - Etapa 5.3: Atualizando cache com novas interfaces...")
         # Adiciona as interfaces recém-criadas ao cache para uso imediato
         for iface in created_interfaces:
-            existing_interfaces[(iface['virtual_machine']['id'], iface['name'])] = iface
+            # A chave do cache de interface precisa do ID da VM, não do objeto VM
+            if 'virtual_machine' in iface and iface['virtual_machine']:
+                existing_interfaces[(iface['virtual_machine']['id'], iface['name'])] = iface
+
 
     print_flush("   - Etapa 5.4: Verificando e criando IPs faltantes...")
     ips_to_create = []
@@ -259,14 +261,18 @@ def main():
         vm_id = _cache['vms'][vm_name]['id']
         interface_name = "eth0"
         
-        # Garante que a interface existe no cache antes de prosseguir
         if (vm_id, interface_name) not in existing_interfaces:
             continue
 
         interface_id = existing_interfaces[(vm_id, interface_name)]['id']
-        ip_address = vm_data.get("vm_ip_addresses", [None])[0]
-        if not ip_address: continue
         
+        # ================= INÍCIO DA CORREÇÃO 1 =================
+        ip_addresses = vm_data.get("vm_ip_addresses", [])
+        if not ip_addresses:
+            continue
+        ip_address = ip_addresses[0]
+        # ================= FIM DA CORREÇÃO 1 =================
+
         ip_with_mask = f"{ip_address}/32"
         if ip_with_mask not in existing_ips:
             ips_to_create.append({
@@ -292,8 +298,13 @@ def main():
         if vm_name not in _cache['vms']: continue
         
         vm_obj = _cache['vms'][vm_name]
-        ip_address = vm_data.get("vm_ip_addresses", [None])[0]
-        if not ip_address: continue
+        
+        # ================= INÍCIO DA CORREÇÃO 2 =================
+        ip_addresses = vm_data.get("vm_ip_addresses", [])
+        if not ip_addresses:
+            continue
+        ip_address = ip_addresses[0]
+        # ================= FIM DA CORREÇÃO 2 =================
 
         ip_with_mask = f"{ip_address}/32"
         if ip_with_mask not in existing_ips: continue
@@ -301,19 +312,21 @@ def main():
         ip_id_to_set = existing_ips[ip_with_mask]['id']
         current_primary_ip = vm_obj.get('primary_ip4')
         
-        # Define ou atualiza o IP primário apenas se for diferente do atual
         if not current_primary_ip or current_primary_ip['id'] != ip_id_to_set:
             primary_ips_to_update.append({"id": vm_obj['id'], "primary_ip4": ip_id_to_set})
 
     # Executa a atualização em lote dos IPs primários
     bulk_api_call("virtualization/virtual-machines", primary_ips_to_update, 'patch')
-    # ================== FIM DA SEÇÃO REESCRITA ==================
     
     end_time = datetime.now()
     print_flush("\nSINCRONIZAÇÃO CONCLUÍDA!")
     print_flush(f"   - Duração total: {end_time - start_time}")
     print_flush(f"   - VMs Criadas: {len(vms_to_create)}")
     print_flush(f"   - VMs Atualizadas: {len(vms_to_update)}")
+    print_flush(f"   - Interfaces Criadas: {len(interfaces_to_create)}")
+    print_flush(f"   - IPs Criados: {len(ips_to_create)}")
+    print_flush(f"   - IPs Primários Atualizados: {len(primary_ips_to_update)}")
+
 
 if __name__ == "__main__":
     try:
