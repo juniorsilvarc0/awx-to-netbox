@@ -134,7 +134,7 @@ def bulk_api_call(endpoint, object_list, operation='post'):
     method, action_str = op_map[operation]
     
     created_objects = []
-    batch_size = 100
+    batch_size = 50
     
     for i in range(0, len(object_list), batch_size):
         batch = object_list[i:i+batch_size]
@@ -142,7 +142,7 @@ def bulk_api_call(endpoint, object_list, operation='post'):
         try:
             response = method(f"{NETBOX_URL}/api/{endpoint}/", json=batch, timeout=180)
             response.raise_for_status()
-            if response.status_code != 204:
+            if response.status_code != 204 and response.content:
                  created_objects.extend(response.json())
         except requests.exceptions.RequestException as e:
             print_flush(f"ERRO: Falha no lote de {action_str} para {endpoint}.")
@@ -215,50 +215,99 @@ def main():
     created_vms = bulk_api_call("virtualization/virtual-machines", vms_to_create, 'post')
     bulk_api_call("virtualization/virtual-machines", vms_to_update, 'patch')
     
+    # Atualiza o cache com as VMs recém-criadas para garantir que seus IDs estejam disponíveis
     for vm in created_vms:
         _cache['vms'][vm['name']] = vm
         
-    print_flush("\nFASE 5: Preparando e executando lotes para Interfaces e IPs...")
-    interfaces_to_create, ips_to_create, primary_ips_to_update = [], [], []
-    
+    # ================= INÍCIO DA SEÇÃO REESCRITA =================
+    print_flush("\nFASE 5: Sincronizando Interfaces e IPs de forma sequencial para garantir dependências...")
+
+    # ETAPA 5.1: Carregar estado atual de interfaces e IPs
+    print_flush("   - Etapa 5.1: Carregando estado atual de Interfaces e IPs...")
     existing_interfaces = {(iface['virtual_machine']['id'], iface['name']): iface for iface in _paginated_get(netbox_session, NETBOX_URL, "virtualization/interfaces")}
     existing_ips = {ip['address']: ip for ip in _paginated_get(netbox_session, NETBOX_URL, "ipam/ip-addresses")}
 
+    # ETAPA 5.2: Identificar e criar interfaces faltantes
+    print_flush("   - Etapa 5.2: Verificando e criando interfaces faltantes...")
+    interfaces_to_create = []
     for vm_data in vms_from_awx:
         vm_name = vm_data.get("vm_name")
         if vm_name not in _cache['vms']: continue
         
         vm_id = _cache['vms'][vm_name]['id']
+        interface_name = "eth0" # Assume a interface padrão
+        
+        if (vm_id, interface_name) not in existing_interfaces:
+            interfaces_to_create.append({"name": interface_name, "virtual_machine": vm_id, "type": "1000base-t"})
+    
+    # Executa a criação em lote das interfaces
+    created_interfaces = bulk_api_call("virtualization/interfaces", interfaces_to_create, 'post')
+
+    # ETAPA 5.3: Atualizar cache de interfaces e preparar criação de IPs
+    if created_interfaces:
+        print_flush("   - Etapa 5.3: Atualizando cache com novas interfaces...")
+        # Adiciona as interfaces recém-criadas ao cache para uso imediato
+        for iface in created_interfaces:
+            existing_interfaces[(iface['virtual_machine']['id'], iface['name'])] = iface
+
+    print_flush("   - Etapa 5.4: Verificando e criando IPs faltantes...")
+    ips_to_create = []
+    for vm_data in vms_from_awx:
+        vm_name = vm_data.get("vm_name")
+        if vm_name not in _cache['vms']: continue
+
+        vm_id = _cache['vms'][vm_name]['id']
         interface_name = "eth0"
         
-        if (vm_id, interface_name) in existing_interfaces:
-            interface_id = existing_interfaces[(vm_id, interface_name)]['id']
-        else:
-            interfaces_to_create.append({"name": interface_name, "virtual_machine": vm_id, "type": "1000base-t"})
-            continue 
+        # Garante que a interface existe no cache antes de prosseguir
+        if (vm_id, interface_name) not in existing_interfaces:
+            continue
 
-        ip_addresses = vm_data.get("vm_ip_addresses", [])
-        if not ip_addresses: continue
-
-        ip_address_str = ip_addresses[0]
+        interface_id = existing_interfaces[(vm_id, interface_name)]['id']
+        ip_address = vm_data.get("vm_ip_addresses", [None])[0]
+        if not ip_address: continue
         
-        if ip_address_str:
-            ip_with_mask = f"{ip_address_str}/32" if "/" not in ip_address_str else ip_address_str
-            if ip_with_mask not in existing_ips:
-                ips_to_create.append({"address": ip_with_mask, "status": "active", "assigned_object_type": "virtualization.vminterface", "assigned_object_id": interface_id})
-            
-            # --- CORREÇÃO APLICADA AQUI ---
-            if ip_with_mask in existing_ips:
-                primary_ip_info = _cache['vms'][vm_name].get('primary_ip4') # Pode ser None
-                existing_primary_ip_id = primary_ip_info.get('id') if primary_ip_info else None
-                
-                if existing_primary_ip_id != existing_ips[ip_with_mask]['id']:
-                     primary_ips_to_update.append({"id": vm_id, "primary_ip4": existing_ips[ip_with_mask]['id']})
-            # --- FIM DA CORREÇÃO ---
+        ip_with_mask = f"{ip_address}/32"
+        if ip_with_mask not in existing_ips:
+            ips_to_create.append({
+                "address": ip_with_mask, 
+                "status": "active", 
+                "assigned_object_type": "virtualization.vminterface", 
+                "assigned_object_id": interface_id
+            })
 
-    bulk_api_call("virtualization/interfaces", interfaces_to_create, 'post')
-    bulk_api_call("ipam/ip-addresses", ips_to_create, 'post')
+    # Executa a criação em lote dos IPs
+    created_ips = bulk_api_call("ipam/ip-addresses", ips_to_create, 'post')
+
+    # ETAPA 5.5: Atualizar cache de IPs e definir IPs primários
+    if created_ips:
+        print_flush("   - Etapa 5.5: Atualizando cache com novos IPs...")
+        for ip in created_ips:
+            existing_ips[ip['address']] = ip
+    
+    print_flush("   - Etapa 5.6: Verificando e atualizando IPs primários das VMs...")
+    primary_ips_to_update = []
+    for vm_data in vms_from_awx:
+        vm_name = vm_data.get("vm_name")
+        if vm_name not in _cache['vms']: continue
+        
+        vm_obj = _cache['vms'][vm_name]
+        ip_address = vm_data.get("vm_ip_addresses", [None])[0]
+        if not ip_address: continue
+
+        ip_with_mask = f"{ip_address}/32"
+        if ip_with_mask not in existing_ips: continue
+
+        ip_id_to_set = existing_ips[ip_with_mask]['id']
+        current_primary_ip = vm_obj.get('primary_ip4')
+        
+        # Define ou atualiza o IP primário apenas se for diferente do atual
+        if not current_primary_ip or current_primary_ip['id'] != ip_id_to_set:
+            primary_ips_to_update.append({"id": vm_obj['id'], "primary_ip4": ip_id_to_set})
+
+    # Executa a atualização em lote dos IPs primários
     bulk_api_call("virtualization/virtual-machines", primary_ips_to_update, 'patch')
+    # ================== FIM DA SEÇÃO REESCRITA ==================
     
     end_time = datetime.now()
     print_flush("\nSINCRONIZAÇÃO CONCLUÍDA!")
