@@ -29,7 +29,7 @@ for var in ["AWX_URL", "AWX_USER", "AWX_PASSWORD", "NETBOX_URL", "NETBOX_TOKEN"]
 
 # Mapeamentos
 DATACENTER_TO_SITE_MAP = {"ATI-SLC-HCI": "ETIPI - Prédio Sede"}
-CLUSTER_MAP = {"Cluster vSAN": "Cluster-ATI-PI-02"}
+CLUSTER_MAP = {"Cluster vSAN": "Cluster vSAN"}
 
 # Sessões de Requests para reutilização de conexão
 awx_session = requests.Session()
@@ -187,6 +187,8 @@ def main():
         cluster_id = get_or_create_dependency("virtualization/clusters", CLUSTER_MAP.get(vm_data["vm_cluster"]), {"type": cluster_type_id, "site": site_id})
         role_name = next((tag.get('name') for tag in vm_data.get("vm_tags", []) if tag.get('category') == 'Função'), None)
         role_id = get_or_create_dependency("dcim/device-roles", role_name, {"color": "00bcd4", "vm_role": True}) if role_name else None
+        tenant_name = next((tag.get('name') for tag in vm_data.get("vm_tags", []) if tag.get('category') == 'Entidade'), None)
+        tenant_id = get_or_create_dependency("tenancy/tenants", tenant_name) if tenant_name else None
         
         tag_ids = []
         for tag in vm_data.get("vm_tags", []):
@@ -201,7 +203,7 @@ def main():
         payload = {
             "name": vm_name, "status": "active" if vm_data.get("vm_power_state") != "poweredOff" else "offline",
             "vcpus": vm_data.get("vm_cpu_count"), "memory": int(vm_data.get("vm_memory_mb", 0)), "disk": int(vm_data.get("vm_disk_total_gb", 0)),
-            "site": site_id, "cluster": cluster_id, "role": role_id, "tags": tag_ids,
+            "site": site_id, "cluster": cluster_id, "role": role_id, "tenant": tenant_id, "tags": tag_ids,
             "comments": f"Última atualização via AWX: {start_time.strftime('%Y-%m-%d %H:%M:%S')}"
         }
 
